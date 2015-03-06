@@ -1,0 +1,134 @@
+( ============================================================================
+  ANSITERM.MF - ANSI terminal driver for the dumb MinForth terminal
+  ============================================================================
+
+  required by facility.mf
+)
+
+\  Copyright (C) 2003  Andreas Kochenburger (kochenburger@gmx.de)
+\
+\  This program is free software; you can redistribute it and/or modify
+\  it under the terms of the GNU General Public License as published by
+\  the Free Software Foundation; either version 2 of the License, or
+\  (at your option) any later version.
+\
+\  This program is distributed in the hope that it will be useful,
+\  but WITHOUT ANY WARRANTY; without even the implied warranty of
+\  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+\  GNU General Public License for more details.
+\
+\  You should have received a copy of the GNU General Public License
+\  along with this program; if not, write to the Free Software
+\  Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
+
+
+\ ------ Check terminal capability -------------------------------------------
+
+MARKER FORGET-ANSITEST
+
+: ANSITEST
+  cr ." Please check your ANSI terminal compatibility:"
+  cr s" .[32mThis is green text "	 27 pluck c! type
+     s" .[7m and this is inverted text " 27 pluck c! type
+     s" .[0m "				 27 pluck c! type
+  cr ." Does the above line look alright? [Y/N] "
+  key dup [char] Y = swap [char] y = or
+  dup if ." yes" else ." no" then ;
+
+ANSITEST
+[IF]   TERMINAL ON
+[ELSE] TERMINAL OFF OS-TYPE 1 =
+       [IF] CR .( -> you should include ANSI.SYS into your configuration )
+       [THEN]
+[THEN]
+
+FORGET-ANSITEST
+
+
+\ ------ Screen and cursor control -------------------------------------------
+
+BEGIN-PRIVATE
+
+CREATE T-OUT 4 CELLS ALLOT  \ output buffer for escape sequence
+
+: T-PREP  \ ( -- ) prepare fresh t-out
+  t-out 4 cells erase [hex] 5b1b02 t-out ! ;
+
+: T-APP   \ ( c -- ) append a char to t-out
+  t-out count + c! t-out incr ;
+
+: T-SAPP  \ ( -- ) append a semicolon
+  [char] ; t-app ;
+
+: T-NUMAPP  \ ( n -- ) append a decimal number to t-out
+  10 /mod ?dup if 48 + t-app then 48 + t-app ;
+
+: T-TYPE  \ ( -- )
+  t-out count type ;
+
+: T-EMIT   \ ( c -- )
+  t-prep t-app t-type ;
+
+:NONAME terminal @ if [char] A t-emit then ;
+IS Y-UP
+
+:NONAME terminal @ if [char] B t-emit then ;
+IS Y-DOWN
+
+:NONAME terminal @ if [char] C t-emit then ;
+IS X-RIGHT
+
+:NONAME terminal @ if [char] D t-emit then ;
+IS X-LEFT
+
+:NONAME terminal @ if [char] s t-emit then ;
+IS STORE-XY
+
+:NONAME terminal @ if [char] u t-emit then ;
+IS RESTORE-XY
+
+:NONAME  \ ( col-x row-y -- )
+  terminal @ if
+     t-prep t-numapp t-sapp t-numapp [char] H t-app t-type
+  else 2drop then ;
+IS AT-XY
+
+:NONAME
+  terminal @ if
+    t-prep [char] 2 t-app [char] J t-app t-type 0 0 at-xy
+  then ;
+IS PAGE
+
+
+\ ------ Colour control ------------------------------------------------------
+
+7 VALUE T-ATTR  \ actual text attribute
+
+: T-SETATTR  \ set terminal text attribute
+  t-prep [char] 0 t-app
+  t-sapp t-attr 7 and 30 + t-numapp
+  t-sapp t-attr 112 and 4 rshift 40 + t-numapp
+  t-attr   8 and if t-sapp [char] 1 t-app then
+  t-attr 128 and if t-sapp [char] 5 t-app then
+  [char] m t-app t-type ;
+
+END-PRIVATE
+
+:NONAME  \ ( c -- ) set foreground text attribute
+  terminal @ if
+    15 and t-attr -16 and or to t-attr t-setattr
+  else drop then ;
+IS LETTERS
+
+:NONAME  \ ( c -- ) set background text attribute
+  terminal @ if
+    15 and 4 lshift t-attr 15 and or to t-attr t-setattr
+  else drop then ;
+IS BACKGROUND
+
+:NONAME  \ ( -- ) set standard terminal colours
+  white letters black background ;
+IS NORMAL
+
+MAKE-PRIVATE
+

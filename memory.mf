@@ -1,0 +1,81 @@
+{ ============================================================================
+  MEMORY.MF - the MEMORY-ALLOCATION wordset for MinForth
+  ============================================================================
+
+  Heap memory map:
+  HEAP  --> heap memory
+  ..        backwards chained allocated memory blocks
+            data structure: link + len (aligned) + len bytes
+  HP    --> latest allocated memory block
+  ..
+  LIMIT --> heap (and forthspace) end
+}
+
+\  Copyright (C) 2002,2007  Andreas Kochenburger (kochenburger@gmx.de)
+\
+\  This program is free software; you can redistribute it and/or modify
+\  it under the terms of the GNU General Public License as published by
+\  the Free Software Foundation; either version 2 of the License, or
+\  (at your option) any later version.
+\
+\  This program is distributed in the hope that it will be useful,
+\  but WITHOUT ANY WARRANTY; without even the implied warranty of
+\  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+\  GNU General Public License for more details.
+  
+
+\ ------ Heap Memory Allocation ----------------------------------------------
+
+BEGIN-PRIVATE
+
+: ALLOC?  \ ( adr -- false | pa a true ) get linked memory block address
+  dup heap @ u< over hp @ 9 + swap u< or IF drop false EXIT THEN  \ check adr
+  8 - limit @ hp @
+  BEGIN heap @ over u<  \ adr pa a f  
+  WHILE pluck over = IF rot drop true EXIT THEN
+        dup @ rot drop
+  REPEAT
+  3drop false ; 
+
+END-PRIVATE
+
+: FREE  \ ( adr - ior ) free previously allocated memory, ior=0 when ok
+  alloc? IF over limit @ = IF @ hp ! drop ELSE @ swap ! THEN 
+         0 EXIT THEN
+  1 ;
+
+: ALLOCATE  \ ( u -- adr ior ) allocate new memory block, ior=0 when ok
+  aligned >r limit @ hp @  \ pa a | u
+  BEGIN dup cell+ dup @ + cell+ dup r@ + 8 + 3 pick 1+ u<  \ pa a apot room?
+        IF rot dup limit @ =                    \ a apot pa limit? 
+           IF drop dup hp ! ELSE swap dup rot ! THEN
+           tuck ! cell+ r> over ! cell+
+        0 EXIT THEN drop
+        dup @ rot drop dup heap @ u<
+  UNTIL
+  2drop r> 2 ;
+  
+: RESIZE  \ ( adr1 u - adr2 ior ) shrink or copy to larger memory block
+  aligned over alloc? not IF drop 1 EXIT THEN 2drop
+  over cell- @ over u<  \ a1 u realloc?
+  IF allocate IF drop 2 EXIT THEN
+     >r dup dup cell- @ r@ swap move free r> swap
+  EXIT THEN
+  over cell- ! 0 ;
+
+MAKE-PRIVATE
+
+
+\ ------ Allocating and Releasing Total Heap Memory --------------------------
+
+PRIMITIVE _resizeforth RESIZE-FORTH   \ ( addon -- 0|limit ) resize Forthspace
+
+
+\ ------ Updating Environment ------------------------------------------------
+
+:NONAME
+   s" MEMORY-ALLOC"     true ?env
+   s" MEMORY-ALLOC-EXT" true ?env
+   defered env? ;
+IS ENV?
+

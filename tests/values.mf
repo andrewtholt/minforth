@@ -1,0 +1,49 @@
+{ ========================
+  Testing MinForth' VALUEs
+  ========================
+}
+
+CR .( SINGLE NUMBER VALUES: )
+-1 VALUE TEST
+CR .(   This should be -1 : ) TEST .
+2 +TO TEST
+CR .(   This should be  1 :  ) TEST .
+: CTEST1 -2 to test ;
+CTEST1
+CR .(   This should be -2 : ) TEST .
+: CTEST2 4 +to test ;
+CTEST2
+CR .(   This should be  2 :  ) TEST .
+
+CR .( DOUBLE NUMBER VALUES: )
+-1.0 DVALUE DTEST
+CR .(   This should be -10 : ) DTEST D.
+-20. DTO DTEST
+CR .(   This should be -20 : ) DTEST D.
+: CDTEST  +.30 dto dtest ;
+CDTEST
+CR .(   This should be  30 :  ) DTEST D.
+
+CR .( FLOATING-POINT NUMBER VALUES: )
+-1.0E FVALUE FTEST
+CR .(   This should be -1. : ) FTEST F.
+1E FTO FTEST
+CR .(   This should be  1. :  ) FTEST F.
+: CFTEST 2.0E fto ftest ;
+CFTEST
+CR .(   This should be  2. :  ) FTEST F.
+
+CR .( STRING VALUES: )
+14 SNVALUE V1
+S"  Sawyer" SVALUE V2
+S" Tom" STO V1
+V2 +STO V1
+CR .( Tom Sawyer : ) V1 TYPE
+: CSTEST s" Becky" sto v1 s"  Thatcher" +sto v1 ;
+CSTEST
+CR .( Becky Thatcher : ) V1 TYPE
+
+
+
+
+

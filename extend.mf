@@ -1,0 +1,179 @@
+\ ==========================================================================
+\  EXTEND.MF	Extending the Kernel to the full MinForth System
+\ ==========================================================================
+
+CR .( Extending the MinForth Kernel to the full MinForth System )
+CR .( ========================================================= )
+
+\  Copyright (C) 2003  Andreas Kochenburger (kochenburger@gmx.de)
+\
+\  This program is free software; you can redistribute it and/or modify
+\  it under the terms of the GNU General Public License as published by
+\  the Free Software Foundation; either version 2 of the License, or
+\  (at your option) any later version.
+\
+\  This program is distributed in the hope that it will be useful,
+\  but WITHOUT ANY WARRANTY; without even the implied warranty of
+\  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+\  GNU General Public License for more details.
+\
+\  You should have received a copy of the GNU General Public License
+\  along with this program; if not, write to the Free Software
+\  Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
+
+WARNING ON
+
+\ ------ Computer-dependent Words --------------------------------------------
+
+CR
+.( Loading FACILITY wordset... ) FLOAD facility.mf
+
+:NONAME  \ colorize error messages
+   red bright letters defered errmsg normal ;
+IS ERRMSG
+
+:NONAME normal ;
+IS READY
+
+OS-TYPE 2 = [IF]  \ Windows colours
+:NONAME  \ ( -- ) show stack depth as status
+  state @ if exit then
+  normal cyan letters depth u. fdepth u. ." - "
+  blue letters ;
+[ELSE]            \ DOS and Linux colours
+:NONAME
+  state @ if exit then
+  normal cyan bright letters depth u. fdepth u. ." - "
+  white bright letters ;
+[THEN]
+IS STATUS
+
+
+\ ------ System Vocabularies -------------------------------------------------
+
+CR .( Loading SEARCH order wordset... ) FLOAD search.mf
+
+VOCABULARY HIDDEN
+HIDDEN ALSO FORTH
+
+HIDDEN DEFINITIONS
+
+FETCH-WORDS{
+  RPMAX SPMAX FPMAX
+  (THROW) (DEBUG)
+  'BCB 'FCB 'SIB 'TIB
+  TP TEMP HLD
+  (SOURCE) (SOURCE-ID) (FID)
+  DISK-ERROR END? (KEY) (ENV)
+  PRIM>XT XT>PRIM TC>ERRMSG
+  [CONST] [VALUE] [VAR] [USER] [VECT] [NEST] [UNNEST] [LIT] [SLIT]
+  [TICK] [BRANCH] [ZBRANCH] [VBRANCH]
+  ?NEGATE
+  RAWKEY? RAWKEY
+  NOPEN NRENAME NDELETE NSTAT
+  HCLOSE HSEEK HTELL HSIZE HCHSIZE HREAD HWRITE
+  STDIN STDOUT STDERR
+  B/FCB FCB F>NAME F>LCTR F>LBUF FID>FCB ?FCB
+  ?DISK-ABORT
+  CHAR-IN CTRL-IN 'WORD ?UPPERCASE
+  LINK>NAME NAME>LINK >LINK >NAME >VIEW LINK> NAME> VIEW> LINK>NEXT
+  .NAME ?NAME
+  SEARCH-NAMES SEARCH-THREAD #VOCS HASH
+  (INTERPRET)
+  ERRMSG SOURCE>R R>SOURCE SRCERRMSG
+  HIDE REVEAL "HEADER "CREATE
+  (IMMEDIATE) !CSP ?CSP (POSTPONE) (DOES)
+  ADJUST-FENCE (TO)
+  >MARK >RESOLVE <MARK <RESOLVE (DO) (?DO)
+  B/IB SBUF S>BUF (ABORT")
+  TRIM-THREADS
+  INITIALISE (COLD) GREETINGS
+  ?ENV ENV?
+  APPEND-MF MAKE-VIEWFILE
+  FETCH-WORDS{
+}
+
+ONLY FORTH HIDDEN ALSO FORTH ALSO DEFINITIONS
+
+
+\ ------ All the other optional Wordsets -------------------------------------
+
+CR .( Loading BLOCK wordset... )             FLOAD block.mf
+CR .( Loading FILE access wordset... )       FLOAD file.mf
+CR .( Loading TOOLS wordset... )             FLOAD tools.mf
+CR .( Loading DOUBLE-NUMBER wordset... )     FLOAD double.mf
+CR .( Loading FLOATING-POINT wordset... )    FLOAD float.mf
+CR .( Loading STRING wordset... )            FLOAD string.mf
+CR .( Loading LOCALS wordset... )            FLOAD locals.mf
+CR .( Loading EXCEPTION wordset... )         FLOAD except.mf
+CR .( Loading MEMORY allocation wordset... ) FLOAD memory.mf
+
+
+\ ------ Preparing MinForth System ------------------------------------------
+
+FORTH DEFINITIONS
+
+BEGIN-PRIVATE
+
+: (.MEM)  \ ( percent-free absolute ) display memory usage
+  u. [char] ( emit 0 u.r ." % free)" ;
+
+: .LOGO  \ ( -- ) display MinForth start information
+   ." MINFORTH Version 1.5 ** A MINimalistic but complete FORTH System"
+   cr 64 0 do [char] = emit loop
+   cr ." MinForth is free software and comes with ABSOLUTELY NO WARRANTY"
+   cr ." under the conditions of the GNU General Public License"
+   cr 64 0 do [char] - emit loop ;
+
+END-PRIVATE
+
+: .MEM	\ ( -- ) show actual memory utilisation
+   cr ." Codespace: " unused 100 names @ */ names @ (.mem)
+   cr ." Namespace: " 'bcb @ names @ - 100 unused-n pluck */ swap (.mem)
+   cr ." Heapspace: " limit @ heap @ - 100 unused-h pluck */ swap (.mem) ;
+
+OS-TYPE 2 = [IF]  \ Windows
+:NONAME  \ ( -- ) a shiny welcome
+   normal page blue bright letters .logo magenta letters .mem cr ;
+[ELSE]
+:NONAME           \ DOS and Linux
+   normal page brown bright letters .logo green bright letters .mem cr ;
+[THEN]
+IS GREETINGS
+
+:NONAME   \ start with standard search order
+   only forth also root definitions
+   s" FREEZE" "find IF execute THEN
+   s" MARKER FREEZE" evaluate
+   forth definitions ;
+IS (COLD)
+
+MAKE-PRIVATE
+
+: WARM	\ ( -- ) perform a warm restart
+  (boot) abort ;
+
+: COLD	\ ( -- ) perform a cold start of the MinForth system
+  (boot) (cold) greetings abort ;
+
+
+\ ------ Saving the MinForth System -----------------------------------------
+
+: SAVE-SYSTEM  \ ( 'name' -- ) save a new MinForth image file as name.i
+  bl word count 2dup save-image
+  cr ." MinForth system image saved as " type ;
+
+
+\ ------ A last check --------------------------------------------------------
+
+CR RED BRIGHT LETTERS
+DEPTH [IF]
+  .( ? Stack depth error ) BEEP
+[ELSE]
+  .( Congratulations! )
+[THEN]
+WHITE LETTERS
+
+\ Start in BW mode:
+TERMINAL OFF
+

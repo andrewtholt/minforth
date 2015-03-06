@@ -1,0 +1,290 @@
+( ============================================================================
+  TOOLS.MF - the PROGRAMMING-TOOLS wordset for MinForth
+  ============================================================================
+
+  The following standard words are defined in the kernel:
+  ? BYE [IF] [ELSE] [THEN]
+
+  The following standard words are NOT provided in MinForth because all
+  primitives are defined in ANSI-C:
+  ASSEMBLER CODE ;CODE
+)
+
+\  Copyright (C) 2002  Andreas Kochenburger (kochenburger@gmx.de)
+\
+\  This program is free software; you can redistribute it and/or modify
+\  it under the terms of the GNU General Public License as published by
+\  the Free Software Foundation; either version 2 of the License, or
+\  (at your option) any later version.
+\
+\  This program is distributed in the hope that it will be useful,
+\  but WITHOUT ANY WARRANTY; without even the implied warranty of
+\  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+\  GNU General Public License for more details.
+\
+\  You should have received a copy of the GNU General Public License
+\  along with this program; if not, write to the Free Software
+\  Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
+
+
+REQUIRES facility.mf
+REQUIRES search.mf
+
+\ ------ Branching -----------------------------------------------------------
+
+: AHEAD     \ (C -- adr ) unconditional forward jump
+  postpone [branch] >mark ; IMMEDIATE COMPILE-ONLY
+
+
+\ ------ Words ---------------------------------------------------------------
+
+: WORDS \ ( -- ) list n names in first context wordlist
+  cr context @ here over @ 1+ cells move     \ temporary wordlist copy
+  50 >r
+  begin  0 0 here cell+ here @ cells bounds  \ n threadmax nslfamax
+         do i @ 2dup u<                      \ n thrmax nslfamax nslfai flag
+            if nip nip i swap else drop then
+         4 +loop                             \ thrmax nslfamax
+         dup \ key? if key 2drop 0 then
+  while  ns>cs dup dup cell+ @ dup 256 u<
+         if   drop red bright letters
+         else @ case ['] [vect]  of green letters       endof
+                     ['] [const] of magenta letters     endof
+                     ['] [value] of blue bright letters endof
+                     ['] [var]   of brown letters       endof
+                     ['] [user]  of cyan letters        endof
+                endcase
+         then
+         link>name dup char+ c@ if .name space space else drop then
+         @ swap ! normal
+         r@ if   r> 1 - >r
+            else cr ." --- press space to continue" ekey
+                 32 <> if 
+                    r> drop exit 
+                 then 
+                 cr r> drop 50 >r
+            then
+  repeat r> 3drop ;
+
+
+\ ------ Multiple Line Comments ----------------------------------------------
+
+: {     \ ( -- ) ignore bracketed comments, refill input source if necessary
+  begin [char] } parse + c@ [char] } <>
+  while refill 0= until then ; immediate
+
+
+\ ------ Stack Dumps ---------------------------------------------------------
+
+: .S   \ ( -- ) print datastack
+  depth BEGIN dup 0> WHILE dup pick . 1- REPEAT drop ;
+
+: .RS  \ ( -- ) print returnstack
+   rdepth BEGIN 1- dup 0> WHILE dup rpick u. REPEAT drop ;
+
+
+\ ------ Dump ----------------------------------------------------------------
+
+: DUMP  \ ( adr u -- ) memory range hex dump
+   base @ -rot hex over + over -16 and  \ b adrlo adrhi adr
+   green letters
+   cr ." Address:   " 16 0 do i u. space loop 16 0 do i 1 u.r loop
+   begin 2dup u>
+   while green letters
+         cr dup 8 u.r space space dup >r
+         cyan letters
+         16 begin swap 2over pluck -rot within
+                  if dup c@ 0 <# # # #>
+                  else s" .." then type space
+                  1+ swap 1- dup 0=
+            until 2drop space r>
+         normal
+         16 begin swap 2over pluck -rot within
+                  if dup c@ dup bl 128 within not if drop 46 then emit
+                  else space then
+                  1+ swap 1- dup 0=
+            until drop
+   repeat 3drop base ! ;
+
+
+\ ------ Display allocated and free memory in heap ---------------------------
+
+: SHOW-HEAP  \ ( -- ) display heap memory map
+  limit @ hp @
+  BEGIN cr dup u. ." - " over u. ." : "
+        dup 8 + u. dup cell+ @ dup >r u. ." allocated ("
+        2dup - r> 16 + - dup 0< IF drop 0 THEN u. ." allocatable)"
+        nip dup @ dup 0=
+  UNTIL 2drop ;
+
+
+\ ------ Display the loaded fies chain used by VIEW --------------------------
+
+: SHOW-FILES  \ ( -- ) display all included/loaded files
+  file-link @     \ pfa-filestruct
+  BEGIN dup cell- >name cr .name space dup ? dup .  \ show addresses
+        cell+ @ dup 0=
+  UNTIL drop ;
+
+
+\ ------ VIEW ----------------------------------------------------------------
+
+BEGIN-PRIVATE
+
+: VIEW-ERROR   0= abort" no source to VIEW" ;
+
+END-PRIVATE
+
+: VIEW  \ ( 'wordname' -- ) display definition from source file
+  ' found @ 8 + @                     \ cfa sln
+  dup [hex] ffff0000 and view-error
+  swap >r file-link @ dup             \ sln bestfile actfile | cfa
+  BEGIN r@ over dup @ swap within     \ find best viewfile
+        IF   over r@ - over r@ - u>
+             IF nip dup THEN
+        THEN cell+ @ dup 0=
+  UNTIL
+  drop r> over dup @ swap within view-error \ sln file-cfa
+  cell- >name count [hex] 1f and            \ sln na u
+  ." in file " 2dup type rot dup 16 rshift >r 0>
+  IF ."  line # " r@ (u.) type [char] : emit
+     fopen 0 0 r>                 \ fid a u sln
+     BEGIN  dup
+     WHILE  1- nip nip over freadln not  \ fid sln a u flag
+            if 2drop fclose true ABORT" not accessible!" then rot
+     REPEAT drop cr type
+     BEGIN  dup freadln ( >r -trailing r> ) over and
+     WHILE  cr type
+     REPEAT 2drop fclose
+  ELSE
+     r> [hex] 7fff and dup 4 rshift >r [hex] 1f and
+     ."  block # " r@ u. ." line # " (u.) type
+     [DEFINED] LIST
+     [IF] [char] : emit block-open r> list block-close [ELSE] 3drop [THEN]
+  THEN ;
+
+MAKE-PRIVATE
+
+
+\ ------ See -----------------------------------------------------------------
+
+MARKER CLEAN
+: PRIMNUMBER \ ( -- prim# ) calculate number of primitives
+  1 begin dup here xt>prim while 1+ repeat ;
+PRIMNUMBER CLEAN
+
+BEGIN-PRIVATE
+
+CONSTANT PRIM#  \ remember primnumber
+
+: SEE-FLAGS  \ ( lfa -- ) show header flags
+  link>name c@ dup
+  [hex] 40 and if ."  IMMEDIATE" then
+  [hex] 20 and if ."  COMPILE-ONLY" then ;
+
+: SEE-NAMEWF \ ( lfa -- ) show the header name with flags
+  dup link>name .name see-flags ;
+
+: SEE-CODE   \ ( cfa -- ) show the primitive name
+  cr ." CODE " ?name ;
+
+: SEE-OFS    \ ( ip -- next-ip ) show the offset for branches
+  cell+ dup @ over - 4 / 1 - space 0 signed on .r signed off ;
+
+: SEE-COLON  \ ( lfa cfa -- ) show a hilevel word definition
+  ." : " over link>name .name 3 spaces
+  dup >view @ [hex] ffff and 12 -  \ lfa cfa len
+  swap >body dup rot + swap        \ lfa end-ip start-ip
+  begin 2dup u>
+  while dup @ dup ?name case
+     ['] [lit]  of cell+ dup @ space 0 .r  endof
+     ['] [slit] of cell+ count space [char] " emit 2dup type [char] " emit
+                   + 3 - aligned endof
+     ['] [tick] of cell+ dup @ space ?name endof
+     ['] [branch]  of see-ofs endof
+     ['] [zbranch] of see-ofs endof
+     ['] [vbranch] of see-ofs endof
+     endcase space cell+
+  repeat 2drop
+  [char] ; emit see-flags ;
+
+END-PRIVATE
+
+DEFER XTSEE \ ( cfa -- ) display the word with the execution token xt in cfa
+
+BEGIN-PRIVATE
+
+: (XTSEE)   \ ( lfa cfa -- ) display a word with header at lfa
+  cr dup @ case
+    ['] [vect]   of cell+ @ tuck ?name ."  is DEFER " see-namewf
+                    ?dup if xtsee then endof
+    ['] [var]    of cell+ ? ." is VARIABLE " see-namewf endof
+    ['] [value]  of execute . ." is VALUE " see-namewf endof
+    ['] [const]  of execute . ." CONSTANT " see-namewf endof
+    ['] [user]   of cell+ @ ? ." is USER " see-namewf endof
+    ['] [nest]   of see-colon endof
+    ." (DOES) is " rot see-namewf \ cfa xt
+    cr search-names dup link> see-colon
+  endcase ;
+
+END-PRIVATE
+
+:NONAME   \ ( cfa -- ) display the word with the execution token xt
+  dup prim# u< if see-code exit then
+  dup 256 here within not abort" Invalid execution token"
+  dup >link swap (xtsee) ;
+IS XTSEE
+
+: SEE     \ ( 'word' -- ) display the word's internal representation
+  ' found @ swap  \ header-lfa cfa
+  dup prim# u< if see-code space see-namewf exit then
+  dup >link pluck <> if cr ?name ."  is ALIAS " see-namewf exit then
+  (xtsee) ;
+
+MAKE-PRIVATE
+
+
+\ ------ FORGET --------------------------------------------------------------
+
+: FORGET  \ ( 'name' -- ) forget word in compilation wordlist and successors
+  get-word current @ search-wordlist     \ cfa flag
+  0= abort" Word to FORGET not in compilation wordlist"
+  dup fence @ u< abort" Can't FORGET below FENCE"       \ cfa
+  dup >link dup
+  BEGIN  dup link> 3 pick u<  \ find predecessor
+  WHILE  nip dup link>next
+  REPEAT drop                 \ cfa pred-nfa
+  context #vocs cells bounds  \ clean context
+  DO over i @ u< IF current @ i ! THEN
+  4 +LOOP
+  over >link trim-threads
+  dup cs>ns last-n ! link> last ! cell- dup dp ! @ dp-n !
+  file-link @ BEGIN here over u< WHILE cell+ @ REPEAT file-link ! ;
+
+
+\ ------ Control Flow Stack Operations ---------------------------------------
+
+\ MinForth uses the data stack as control flow stack
+' PICK ALIAS CS-PICK
+' ROLL ALIAS CS-ROLL
+
+
+\ ------ Editor --------------------------------------------------------------
+
+VOCABULARY EDITOR
+
+EDITOR DEFINITIONS
+
+: EDIT
+  here dup s" edit " build bl word count build over - os-command drop cr ;
+
+FORTH DEFINITIONS
+
+
+\ ------ Updating Environment ------------------------------------------------
+
+:NONAME
+   s" TOOLS"     true ?env
+   s" TOOLS-EXT" true ?env
+   defered env? ;
+IS ENV?

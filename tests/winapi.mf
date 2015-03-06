@@ -1,0 +1,127 @@
+\ --------------------------------
+\ Win32 API function usage example
+\ --------------------------------
+
+( Various Win32 API references can be found in the web. E.g. at
+    ftp://ftp.cs.virginia.edu/pub/lcc-win32/win32hlp.exe
+    http://www.borland.com/devsupport/borlandcpp/patches/BC52HLP1.ZIP
+  in the form of Windows help files. If you are new to Windows programming,
+  the classic books of Charles Petzold are ideal to start with.
+) 
+
+REQUIRES winterm  \ of course
+
+0 VALUE APIFUNC   \ general purpose function pointer
+
+VARIABLE LBUFFER  \ buffer  
+148 CHARS ALLOT   \ would be large enough for OSVERSIONINFO
+
+\ From the API reference:
+\ The GetConsoleTitle function retrieves the title bar string for the current
+\ console window. 
+\ DWORD GetConsoleTitle(
+\    LPTSTR lpConsoleTitle,	// address of buffer for title  
+\    DWORD nSize 		// size of the buffer 
+\ );	
+
+\ All Windows functions working with text strings exist in two versions: the
+\ first for normal 8-bit ANSI characters and the second for 16-bit wide
+\ characters (Unicode). We are working with Western characters, so we append
+\ the letter A to the function name (otherwise it would be W):
+
+S" GetConsoleTitleA" KERNEL-PROC TO APIFUNC  \ set function pointer
+LBUFFER >FAR        \ 1. parameter: buffer lpConsoleTitle
+64                  \ 2. parameter: we could use up to 148
+APIFUNC 2 RUN-PROC  \ execute an API function of 2 parameters
+
+CR .( Console title length is ) DUP . ( characters. )
+CR .( Console title is: ) LBUFFER SWAP TYPE
+
+CR
+CR .( --- hit return ) ekey drop
+CR
+
+\ Just as before:
+CR .( Setting tile to: Oh my darling Clementine )
+S" SetConsoleTitleA" KERNEL-PROC TO APIFUNC
+S" Oh my darling Clementine" S>FAR APIFUNC 1 RUN-PROC DROP
+
+CR
+CR .( --- hit return ) ekey drop
+CR
+
+\ From the API reference:
+\ The GetVersion function returns the current version number of Windows and
+\ information about the operating system platform.
+\ DWORD GetVersion(VOID)
+\ If the function succeeds, the return value is a DWORD value that contains
+\ the major and minor version numbers of Windows in the low order word, and
+\ information about the operating system platform in the high order word.
+
+CR .( Retrieving OS-Info for Windows NT/2000/XP )
+S" GetVersion" KERNEL-PROC 0 RUN-PROC  \ this API function has no parameters
+CR .( NT-Version: ) dup hex ffff and decimal . .( Build: ) 16 rshift .
+
+CR
+CR .( --- hit return ) ekey drop
+CR
+
+\ Now we use a function that is not in the Windows library KERNEL32.DLL, but
+\ in USER32.DLL. There are many methods to figure out which functions reside
+\ in a library. One can use QUIKVIEW of Windows 9x, or browse the buildlib
+\ export function files if you have lcc-win32. I use Microsoft's Dependency
+\ Walker and load user32.dll; then I have the three other important libraries
+\ in one quick display.
+
+\ From the API reference:
+\ The MessageBox function creates, displays, and operates a message box. The
+\ message box contains an application-defined message and title, plus any
+\ combination of predefined icons and push buttons. 
+\ int MessageBox(
+\    HWND hWnd,		// handle of owner window
+\    LPCTSTR lpText,	// address of text in message box
+\    LPCTSTR lpCaption,	// address of title of message box  
+\    UINT uType 	// style of message box
+\ );
+
+\ MinForth string values are the easiest way to store text strings:
+S" My first MinForth Message Box" SVALUE MBTITLE
+S" Click a button and observe the result in the MinForth console."
+				  SVALUE MBTEXT		  
+CR .( Message Box: )
+S" MessageBoxA" S>FAR
+S" user32.dll"  S>FAR LOAD-DLL GET-PROC TO APIFUNC
+0                  \ 1. parameter: NULL for no owner window
+MBTEXT  S>FAR      \ 2. parameter: lpText
+MBTITLE S>FAR      \ 3. parameter: lpCaption
+HEX 33 DECIMAL     \ 4. parameter: uint MB_YESNOCANCEL|MB_ICONWARNING
+APIFUNC 4 RUN-PROC \ execute API-function with 4 parameters
+
+.( you clicked )
+DUP 6 = [IF] .( YES ) [THEN]
+DUP 7 = [IF] .( NO  ) [THEN]
+    2 = [IF] .( CANCEL ) [THEN]
+
+CR
+CR .( --- hit return ) ekey drop    
+CR
+
+\ From the API reference:
+\ The WinExec function runs the specified application. 
+\ UINT WinExec(
+\    LPCSTR lpCmdLine,	// address of command line 
+\    UINT uCmdShow 	// window style for new application 
+\ );	
+
+CR .( Starting Notepad )
+S" WinExec" KERNEL-PROC TO APIFUNC
+S" notepad.exe" s>far  \ command line
+10                     \ SW_SHOWDEFAULT
+APIFUNC 2 RUN-PROC DROP
+
+\ Note: a quick way to get the numeric values of Windows constants is to use
+\ the FindWin32Constant function of the WINCON.DLL library that can be found
+\ in many sites in the web. The excellent Win32Forth system uses that library
+\ as well. 
+
+CR CR .( That was all, folks. )

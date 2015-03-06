@@ -1,0 +1,145 @@
+( ============================================================================
+  DOUBLE.MF - the DOUBLE NUMBER wordset for MinForth
+  ============================================================================
+
+  The following standard words are defined in the kernel:
+  D+ DNEGATE DABS
+)
+
+\  Copyright (C) 2002  Andreas Kochenburger (kochenburger@gmx.de)
+\
+\  This program is free software; you can redistribute it and/or modify
+\  it under the terms of the GNU General Public License as published by
+\  the Free Software Foundation; either version 2 of the License, or
+\  (at your option) any later version.
+\
+\  This program is distributed in the hope that it will be useful,
+\  but WITHOUT ANY WARRANTY; without even the implied warranty of
+\  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+\  GNU General Public License for more details.
+\
+\  You should have received a copy of the GNU General Public License
+\  along with this program; if not, write to the Free Software
+\  Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
+    
+\ ------ Stack Operations ----------------------------------------------------
+
+: 2ROT  \ ( d1 d2 d3 -- d2 d3 d1 )
+  5 roll 5 roll ;
+
+: 4DUP  \ ( d1 d2 -- d1 d2 d1 d2 )
+  2over 2over ;
+
+
+\ ------ Arithmetics ---------------------------------------------------------
+
+' DROP ALIAS D>S  \ ( d -- n ) convert from double to single number
+
+: D-  \ ( d1 d2 -- ddiff ) subtract d2 from d1
+  dnegate d+ ;
+
+: D2*   \ ( d -- d' ) shift d left by one bit
+  2 mu* ;
+
+HEX
+
+: D2/   \ ( d -- d' ) shift d right by one bit
+  tuck 2 mu/mod rot drop rot 0< IF 80000000 or THEN ;
+
+DECIMAL
+
+
+\ ------ Comparisons ---------------------------------------------------------
+
+: D=    \ ( d1 d2 -- f ) true if d1 = d2
+  dnegate d+ or 0= ;
+
+: D0=   \ ( d -- flag ) true if d = 0
+  or 0= ;
+
+: D0<   \ ( d -- flag ) true if d < 0
+  nip 0< ;
+
+: DU<   \ ( ud1 ud2 -- flag ) true if ud1 < ud2
+  pluck over = IF drop nip ELSE nip rot drop THEN u< ;
+
+: D<    \ ( d1 d2 -- flag ) true if d1 < d2
+  pluck over = IF drop nip u< ELSE nip rot drop < THEN ;
+
+: DMIN  \ ( d1 d2 -- d1|d2 ) discard the bigger double number
+  4dup d< not IF 2swap THEN 2drop ;
+
+: DMAX  \ ( d1 d2 -- d1|d2 ) discard the bigger double number
+  4dup d< IF 2swap THEN 2drop ;
+
+
+\ ------ Mixed Arithmetics ---------------------------------------------------
+
+: M+    \ ( d n -- dsum ) add single number n to double number d
+  s>d d+ ;
+
+: M*/   \ ( d1 n1 n2 -- d2 ) d1*n1/n2 with intermediate triple number result
+  3dup xor xor >r abs >r abs >r dabs
+  r@ um* rot r> um* swap >r m+ r> -rot r@ um/mod -rot r> um/mod -rot drop
+  r> 0< if dnegate then ;
+
+
+\ ------ Double Number Output ------------------------------------------------
+
+: (UD.) \ ( ud -- a l ) convert unsigned double number to string
+  <# #S #> ;
+
+: UD.   \ ( ud -- ) display unsigned double number
+  (ud.) type space ;
+
+: UD.R  \ ( ud l -- ) display ud right-aligned in a l-wide field
+  >r (ud.) r> over - spaces type ;
+
+: (D.)  \ ( d -- a l ) convert signed double number to string
+  tuck dabs <# #s rot sign #> ;
+
+: D.    \ ( d -- ) display signed double number
+  (d.) type space ;
+
+: D.R   \ ( d l -- ) display signed d right-aligned in a l-wide field
+  >r (d.) r> over - spaces type ;
+
+
+\ ------ Defining Words ------------------------------------------------------
+
+: 2LITERAL \ ( d -- ) compile d as inline literal double number
+  swap postpone literal postpone literal ; immediate compile-only
+
+: 2VARIABLE \ ( 'name' -- ) create a double variable, initialised with 0.
+  create 0 , 0 , ;
+
+: 2CONSTANT \ ( d 'name' -- ) create a double constant with the value d
+  create , , does> 2@ ;
+
+
+\ ------ MinForth Double Values ----------------------------------------------
+
+BEGIN-PRIVATE
+
+0 VALUE DO-DVALUE
+
+END-PRIVATE
+
+: DVALUE \ ( d 'name' -- ) create a double constant with the value d
+  create , , does> [ HERE TO DO-DVALUE ] 2@ ;
+
+: DTO    \ ( d 'name' -- ) store a
+  ' dup @ do-dvalue <> -32 ?throw cell+
+  state @ IF [compile] literal postpone 2! ELSE 2! THEN ; IMMEDIATE
+
+MAKE-PRIVATE
+
+
+\ ------ Updating Environment ------------------------------------------------
+
+:NONAME
+  s" DOUBLE"     true ?env
+  s" DOUBLE-EXT" true ?env
+  defered env? ;
+IS ENV?
+

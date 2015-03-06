@@ -1,0 +1,22 @@
+( TCONF.MF - a debugging example
+  MinForth program for the conversion between temperature units
+  Kelvin, Celsius, Fahrenheit and Reaumur.
+  The Celsius scale is used as basis for all conversions.
+)
+
+marker anew
+
+: K>C   ( degK -- degC )  273 - ; 
+: R>C   ( degR -- degC )  5 4 */ ;
+: F>C   ( degF -- degC )  32 - 59 */ ; ( should be 5 9 )
+
+: C>K   ( degC -- degK )  273 + ;
+: C>R   ( degC -- degR )  4 5 */ ;
+: C>F   ( degC -- degF )  9 5 */ 32 + ;
+
+\ Test
+
+: F>K   ( Fahrenheit -- Kelvin )
+  F>C C>K ;
+\ TEST: 32 degF = 273 degK
+\       try 32 f>k .

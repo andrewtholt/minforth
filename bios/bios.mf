@@ -1,0 +1,168 @@
+( ============================================================================
+  BIOS.MF - BIOS functions for DOS PCs with MinForth
+  ============================================================================
+
+  The functions are for a minimum  16-bit PC architecture with 8086 processor,
+  DOS operating system without EMS- or XMS- or DPMI-support.
+
+  Thus the maximum addressable memory region is 1024 K. Tthe maximum "normal
+  memory" region for DOS PCs is just 640 K. Addresses are converted to
+  MinForth 32-bit unsigned integers which contain the segment in the upper
+  word and the offset in the lower word.
+
+  Be careful. MinForth cannot catch exceptions caused by improper system
+  manipulation.
+)
+
+\  Copyright (C) 2002  Andreas Kochenburger (kochenburger@gmx.de)
+\
+\  This program is free software; you can redistribute it and/or modify
+\  it under the terms of the GNU General Public License as published by
+\  the Free Software Foundation; either version 2 of the License, or
+\  (at your option) any later version.
+\
+\  This program is distributed in the hope that it will be useful,
+\  but WITHOUT ANY WARRANTY; without even the implied warranty of
+\  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+\  GNU General Public License for more details.
+\
+\  You should have received a copy of the GNU General Public License
+\  along with this program; if not, write to the Free Software
+\  Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
+
+
+\ ------ Hardware port access ------------------------------------------------
+
+PRIMITIVE _binp   _BINP   \ ( port -- byte ) read one byte from port
+
+PRIMITIVE _winp   _WINP   \ ( port -- word ) read one word from port
+
+PRIMITIVE _boutp  _BOUTP  \ ( byte port -- ) write one byte to port
+
+PRIMITIVE _woutp  _WOUTP  \ ( word port -- ) write one word to port
+
+
+\ ------ Addressing external memory ------------------------------------------
+
+PRIMITIVE _far	  >FAR \ ( mf-adr -- far-adr ) convert MinForth internal
+                       \   addresses to external system addresses
+
+: >SEGOFS  \ ( far-adr -- seg ofs ) split address to segment and offset
+  dup [hex] ffff and swap 16 rshift swap ;
+
+: SEGOFS>  \ ( seg ofs -- far-adr ) combine segment and offset to address
+  swap 16 lshift or ;
+
+PRIMITIVE _bat    _B@ \ ( far-adr -- byte ) fetch one byte externally
+
+PRIMITIVE _wat    _W@ \ ( far-adr -- word ) fetch one word externally
+
+PRIMITIVE _bstore _B! \ ( byte far-adr -- ) store one byte externally
+
+PRIMITIVE _wstore _W! \ ( word far-adr -- ) store one word externally
+
+
+\ ------ Interrupts ----------------------------------------------------------
+
+PRIMITIVE _intr _INTR \ ( regarray int -- ) system interrupt # int
+
+VARIABLE _REGS        \ 20 bytes for MinForth register array
+5 CELLS ALLOT
+
+\ processor registers
+_REGS      CONSTANT _AX   _AX CONSTANT _AL    _AX 1+ CONSTANT _AH
+_REGS  2 + CONSTANT _BX   _BX CONSTANT _BL    _BX 1+ CONSTANT _BH
+_REGS  4 + CONSTANT _CX   _CX CONSTANT _CL    _CX 1+ CONSTANT _CH
+_REGS  6 + CONSTANT _DX   _DX CONSTANT _DL    _DX 1+ CONSTANT _DH
+_REGS  8 + CONSTANT _BP   _REGS 10 + CONSTANT _SI
+_REGS 12 + CONSTANT _DI   _REGS 14 + CONSTANT _DS
+_REGS 16 + CONSTANT _ES   _REGS 18 + CONSTANT _FLAGS
+
+: W@  \ ( register -- word ) read a register
+  @ [hex] ffff and ;
+
+: W!  \ ( word register -- ) write to a register
+  2dup c! swap 8 rshift swap 1+ c! ;
+
+
+\ ---- BIOS Video ------------------------------------------------------------
+
+\ Standard function examples for text or CGA graphics
+
+: V_INTR  \ ( function -- ) BIOS-interrupt 10h for video control
+  _ah c! _regs [hex] 10 _intr ;
+
+: V_SETMODE  \ ( videomode -- ) set video mode
+  _al c! 0 v_intr ;
+
+: V_GETMODE  \ ( -- videomode ) get video mode
+  15 v_intr _al c@ ;
+
+: V_CLEARPAGE  \ ( colour -- ) clear the actual video page
+  v_getmode v_setmode ;
+
+: V_GETCOLUMS  \ ( -- columns ) get number of characters per line
+  15 v_intr _ah c@ ;
+
+: V_SETPAGE  \ ( page -- ) set actual video page
+  _al c! 5 v_intr ;
+
+: V_GETPAGE  \ ( -- page ) get actual video page
+  15 v_intr _bh c@ ;
+
+: V_GETCURSOR  \ ( -- line column ) get cursor position
+  15 v_intr 3 v_intr _dh c@ _dl c@ ;
+
+: V_SETCURSOR  \ ( line column -- ) set cursor position
+  15 v_intr _dl c! _dh c! 2 v_intr ;
+
+: V_GETCURSORFORM  \ ( -- startline endline ) get cursor form
+  15 v_intr 3 v_intr _ch c@ _cl c@ ;
+
+: V_SETCURSORFORM  \ ( startline endline -- ) set cursor form
+  _cl c! _ch c! 1 v_intr ;
+
+: V_SCROLLUP  \ ( lines x0 xend y0 yend attr -- ) scroll window up one
+  _bh c! _dh c! _ch c! _dl c! _cl c! _al c! 6 v_intr ;
+
+: V_SCROLLDOWN  \ ( lines x0 xend y0 yend attr -- ) scroll window down
+  _bh c! _dh c! _ch c! _dl c! _cl c! _al c! 7 v_intr ;
+
+: V_GETCHAR  \ ( -- attr char ) read character at cursor position
+  15 v_intr 8 v_intr _ah c@ _al c@ ;
+
+: V_SETCHAR  \ ( char -- ) set character to cursor position
+  15 v_intr 1 _cx w! _al c! 10 v_intr ;
+
+: V_SETCOLORCHAR  \ ( attr char -- ) set character to cursor position
+  15 v_intr 1 _cx w! _al c! _bl c! 9 v_intr ;
+
+: V_WRITECHAR  \ ( attr char -- ) write character, update cursor
+  _al c! _bl c! 14 v_intr ;
+
+: V_WRITESTRING  \ ( attr adr u -- ) write text string, update cursor
+  over c@ drop 2dup + 1- c@ drop ( test buffer access )
+  15 v_intr 3 v_intr
+  _cx w! >far >segofs _bp w! _es w!
+  1 _al c! 19 v_intr ;
+
+: V_SETFRAMECOLOR  \ ( attr -- ) set frame colour in graphics mode
+  _bl ! 0 _bh c! 11 v_intr ;
+
+: V_PLOT  \ ( attr line column -- ) set graphics dot at position
+  _cx w! _dx w! _al c! 12 v_intr ;
+
+: V_PLOTREAD  \ ( line colume -- attr ) read graphics dot at position
+  _cx w! _dx w! 13 v_intr _al c@ ;
+
+
+\ ------ RAM inquiry ---------------------------------------------------------
+
+: BIOS_RAM  \ ( -- mem ) get available RAM below 640 K
+  _regs [hex] 12 _intr _ax w@ ;
+
+
+\ ------ DOS interrupts ------------------------------------------------------
+
+: DOS_INTR  \ ( function -- ) basic DOS interrupt
+  _ah c! _regs [hex] 21 _intr ;

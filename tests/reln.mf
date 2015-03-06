@@ -1,0 +1,24 @@
+{ Example:  Relocate MinForth Namespace
+  -------------------------------------
+  This shows how simple it is to move the MinForth namespace
+  around i.e. to balance between namespace and codespace size,
+  WHILE MINFORTH IS RUNNING!
+  You can check the results with .MEM .
+}
+
+: REL-N  ( delta -- / relocate namespace by delta bytes )
+  aligned dup 0<
+  if  \ move down, check free codespace
+     unused over +
+  else \ move up, check free namespace
+     unused-n over -
+  then
+  0< -9 ?throw
+  names @ 2dup + dp-n @ move names +! ;
+
+: BALANCED  ( -- optimum_free_codespace )
+  unused unused-n + here dup dp-n @ + */ ;
+
+: BAL-N  ( -- / set namespace to a well-balanced size )
+  balanced unused - rel-n ;
+

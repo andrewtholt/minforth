@@ -1,0 +1,95 @@
+( ============================================================================
+  STRING.MF - the STRING wordset for MinForth
+  ============================================================================
+
+  The following standard words are defined in the kernel:
+  COMPARE SLITERAL
+)
+
+\  Copyright (C) 2002  Andreas Kochenburger (kochenburger@gmx.de)
+\
+\  This program is free software; you can redistribute it and/or modify
+\  it under the terms of the GNU General Public License as published by
+\  the Free Software Foundation; either version 2 of the License, or
+\  (at your option) any later version.
+\
+\  This program is distributed in the hope that it will be useful,
+\  but WITHOUT ANY WARRANTY; without even the implied warranty of
+\  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+\  GNU General Public License for more details.
+\
+\  You should have received a copy of the GNU General Public License
+\  along with this program; if not, write to the Free Software
+\  Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
+    
+
+\ ------ String handling words -----------------------------------------------
+
+: BLANK  \ ( adr u -- ) fill address range with blank chars
+  bl fill ;
+
+: -TRAILING  \ ( adr u -- adr ured ) trim a string by trailing blanks
+  bl -1 trim ;
+
+: /STRING \ ( adr len n -- adr' len' ) shorten string from start
+  2dup u< IF drop dup THEN rot over + -rot - ;
+
+: CMOVE  \ ( from to u -- ) copy address range from lower to higher addresses
+  bounds ?DO dup c@ i c! char+ LOOP drop ;
+
+: CMOVE> \ ( from to u -- ) copy address range from higher to lower addresses
+  BEGIN dup WHILE 1- pluck over + c@ pluck pluck + c! REPEAT 3drop ;
+
+: SEARCH \ ( a1 u1 a2 u2 -- a3 u3 flag ) search a string in another string
+  pluck over u< not
+  IF   pluck over - 4 pick tuck +
+       DO  2dup i over compare 0=
+           IF 2drop + i swap over - true UNLOOP exit THEN
+       -1 +LOOP
+  THEN 2drop false ;
+
+
+\ ------ MinForth String Values ----------------------------------------------
+
+BEGIN-PRIVATE
+
+0 VALUE DO-SVALUE  \ storage for svalue execution xt
+
+: ?SVALUE   ( -- svpfa )
+  ' dup @ do-svalue = IF cell+ EXIT THEN -32 throw ;
+
+: (STO)   \ ( a u sval-pfa -- )
+  2dup @ u< IF cell+ splace EXIT THEN -20 throw ;
+
+: (+STO)  \ ( a u sval-pfa -- )
+  rot >r swap >r dup @ swap cell+ dup c@ r@ + rot over swap u<
+  IF swap dup count + 2r> build 0 swap c! c! EXIT THEN -20 throw ;
+
+END-PRIVATE
+
+: STO   \ ( a u 'name' -- ) store a string in a string value
+  ?svalue state @
+  IF [compile] literal postpone (sto) ELSE (sto) THEN ; IMMEDIATE
+
+: +STO  \ ( a u 'name' -- ) concatenate a string to a string value
+  ?svalue state @
+  IF [compile] literal postpone (+sto) ELSE (+sto) THEN ; IMMEDIATE
+
+: SNVALUE  \ ( u 'name' -- )  create a NULL string value of length u
+  create dup 1+ , here swap 1+ allot align here over - erase
+  DOES> [ HERE TO DO-SVALUE ] ( -- a u )
+  cell+ count ;
+
+: SVALUE  \ ( a u 'name' -- )  create a string value from string a u
+  dup snvalue last @ >body (sto) ;
+
+MAKE-PRIVATE
+
+
+\ ------ Updating Environment ------------------------------------------------
+
+:NONAME
+   s" STRING"     true ?env
+   s" STRING-EXT" true ?env
+   defered env? ;
+IS ENV?

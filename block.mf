@@ -1,0 +1,184 @@
+( ============================================================================
+  BLOCK.MF - the BLOCK wordset for MinForth
+  ============================================================================
+
+  The following standard words are defined in the kernel:
+  \ BLK EVALUATE REFILL
+)
+
+\  Copyright (C) 2002  Andreas Kochenburger (kochenburger@gmx.de)
+\
+\  This program is free software; you can redistribute it and/or modify
+\  it under the terms of the GNU General Public License as published by
+\  the Free Software Foundation; either version 2 of the License, or
+\  (at your option) any later version.
+\
+\  This program is distributed in the hope that it will be useful,
+\  but WITHOUT ANY WARRANTY; without even the implied warranty of
+\  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+\  GNU General Public License for more details.
+\
+\  You should have received a copy of the GNU General Public License
+\  along with this program; if not, write to the Free Software
+\  Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
+    
+\ ------ Block I/O Buffers ---------------------------------------------------
+
+\ --- BCB block I/O buffer structure: (1036)
+\ fid = file identifier of blockfile (4)
+\ blk = block number in buffer (4)
+\ upd = update flag (4)
+\ buf = b/buf bytes buffer area (1024)
+
+BEGIN-PRIVATE
+
+1024 CONSTANT B/BUF  \ bytes per buffer
+
+B/BUF 3 CELLS +
+     CONSTANT B/BCB  \ bytes per buffer control block
+
+64 CONSTANT C/L      \ characters per line for blockfiles
+
+0 VALUE BCB    \ ( -- adr ) address of last used bcb (of current blockbuffer)
+
+: B>UPD  8 + ; \ ( adr -- upd-adr ) update flag address within bcb
+
+: B>BUF 12 + ; \ ( adr -- buf-adr ) 1k buffer area within bcb
+
+END-PRIVATE
+
+\ ------ Reading/Writing Blocks ----------------------------------------------
+
+VARIABLE FILE     \ currently interpreted blockfile
+
+VARIABLE IN-FILE  \ currently opened blockfile
+
+BEGIN-PRIVATE
+
+: (BREAD)   \ ( u fid bcb -- ) read block u of file fid into bcb
+  >r over b/buf * over fseek   \ u fid | bcb -- set filepointer
+  r@ b>buf b/buf pluck fread   \ u fid ur | bcb -- read into buffer
+  b/buf <> -33 ?throw          \ u fid | bcb -- error if incomplete
+  r@ 2! r> b>upd off ;
+
+: (BWRITE)  \ ( bcb -- ) write block to specified file in bcb
+  dup 2@ swap b/buf * swap fseek  \ bcb -- set filepointer
+  dup b>buf b/buf pluck @ fwrite  \ bcb -- write buffer
+  b>buf off ;
+
+END-PRIVATE
+
+: SAVE-BUFFERS  \ ( -- ) write all updated buffers to disk
+  'bcb @  begin  dup fcb u<
+          while  dup b>upd @ if dup (bwrite) then
+  b/bcb + repeat drop ;
+
+: EMPTY-BUFFERS \ ( -- ) erase all block buffers
+  'bcb @ b/bcb 2* erase ;
+
+: UPDATE  \ ( -- ) mark current buffer as modified
+  bcb b>upd on ;
+
+: FLUSH    \ ( -- ) write all updated buffers and leave them clean
+  save-buffers empty-buffers ;
+
+BEGIN-PRIVATE
+
+: ABSENT?   \ ( u fid --  flag ) test if specified block is not current
+  bcb 2@ dnegate d+ or ;
+
+: (BUFFER)  \ ( u fid -- ) get buffer or prepare empty buffer
+  2dup absent? dup
+  if 'bcb @ dup bcb = if b/bcb + then to bcb  \ switch buffers
+     drop 2dup absent?
+  then bcb b>upd dup @
+  if   >r bcb (bwrite) r> off
+  else 3drop then  \ flush buffer
+  if bcb b/bcb erase then ;
+
+: (BLOCK)  \ ( u fid -- ) provide block u of file fid
+  2dup (buffer) 2dup absent? if bcb (bread) exit then 2drop ;
+
+END-PRIVATE
+
+: BUFFER   \ ( u -- adr ) provide/get buffer for/of current file in FILE
+  file @ (buffer) bcb b>buf ;
+
+: BLOCK    \ ( u -- adr ) provide block u of current file in FILE
+  file @ (block) bcb b>buf ;
+
+: IN-BLOCK \ ( blk -- adr ) provide block of opened file in IN-FILE
+  in-file @ (block) bcb b>buf ;
+
+
+\ ------ Displaying blocks ---------------------------------------------------
+
+VARIABLE SCR  \ ( -- adr ) block number most recently LISTed
+
+: LIST    \ ( u -- ) display block u
+  dup in-block swap dup scr !
+  cr ." Block-file " bcb @ fid>name type ."  block # " u.
+  16 0 do cr i 2 u.r [char] | emit i c/l * over + c/l type [char] | emit
+  loop drop ;
+
+
+\ ------ LOADing block files -------------------------------------------------
+
+: LOAD    \ ( u -- ) load block u from the last opened file
+  dup 0= -35 ?throw
+  source>r file @ >r in-file @ file ! (source-id) off
+  dup blk ! echo @
+  if cr ." Loading " file @ fid>name type ."  block # " dup u. then
+  block b/buf set-source ['] interpret catch
+  dup if cr ." ? Error in block-file " file @ fid>name type
+      ."  in block # " blk @ u. ." line " >in @ c/l / u. then
+  file @ in-file ! r> file ! r>source blk @ in-file @ (block) throw ;
+
+: THRU    \ ( u1 u2 -- ) load blocks u1 until u2 in sequence
+  2dup u> -24 ?throw 1+ swap do i load loop ;
+
+
+\ ------ Blockfile supports --------------------------------------------------
+
+: BLOCK-OPEN    \ ( adr u -- ) open the blockfile as per given name
+  fopen in-file ! ;
+
+: BLOCK-CLOSE   \ ( -- ) close the last blockfile
+  in-file @ fclose in-file off ;
+
+: BLOAD \ ( 'name' -- ) open blockfile and load its 1st block
+  here >r
+  bl word count fopen dup >r in-file ! 1 load block-close
+  2r> make-viewfile ;
+
+
+\ ------ Block buffer setup --------------------------------------------------
+
+:NONAME  \ set up 2 bcb block i/o buffers below fcbs
+  defered (boot) 'fcb @ b/bcb 2* - 'bcb ! ;
+IS (BOOT)
+
+'FCB @ B/BCB 2* - DUP 'BCB ! TP !
+
+
+\ ------ Extend definitions for blockfiles -----------------------------------
+
+:NONAME  \  ( -- allow line comments in blockfiles )
+  blk @ if >in @ c/l / 1+ c/l * >in ! r> drop exit then ; IMMEDIATE
+' \ >BODY ! \ patch noop in old definition
+
+:NONAME  \ ( -- flag ) extend REFILL for blockfiles
+  blk @ ?dup if 1+ dup blk ! block 0<> exit then
+  defered refill ;
+IS REFILL
+
+MAKE-PRIVATE
+
+
+\ ------ Updating Environment ------------------------------------------------
+
+:NONAME
+  s" BLOCK"     true ?env
+  s" BLOCK-EXT" true ?env
+  defered env? ;
+IS ENV?

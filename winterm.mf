@@ -1,0 +1,179 @@
+( ============================================================================
+  WINTERM.MF - Windows console driver for the dumb MinForth terminal
+  ============================================================================
+
+  required by facility.mf
+)
+
+\  Copyright (C) 2003  Andreas Kochenburger (kochenburger@gmx.de)
+\
+\  This program is free software; you can redistribute it and/or modify
+\  it under the terms of the GNU General Public License as published by
+\  the Free Software Foundation; either version 2 of the License, or
+\  (at your option) any later version.
+\
+\  This program is distributed in the hope that it will be useful,
+\  but WITHOUT ANY WARRANTY; without even the implied warranty of
+\  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+\  GNU General Public License for more details.
+\
+\  You should have received a copy of the GNU General Public License
+\  along with this program; if not, write to the Free Software
+\  Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
+
+
+\ ------ Set up required Win32 API function interface ------------------------
+
+PRIMITIVE _far	    >FAR \ ( mf-adr -- far-adr ) convert MinForth internal
+                         \   addresses to external system addresses
+
+PRIMITIVE _kernel32 KERNEL32  \ ( -- hdll ) get Windows kernel handle
+
+PRIMITIVE _loaddll  LOAD-DLL  \ ( far-name -- hdll ) reference new dll-handle
+
+PRIMITIVE _getproc  GET-PROC  \ ( far-name hdll -- hproc ) get proc handle
+
+PRIMITIVE _runproc  RUN-PROC  \ ( xn..x1 hproc n -- y ) run proc
+
+: S>FAR  \ ( a u -- far-name ) provide address of a MinForth string or buffer
+  drop >far ;
+
+: KERNEL-PROC  \ ( a u -- hproc ) get kernel-function handle
+  s>far kernel32 get-proc ;
+
+
+\ ------ Initialise API function values --------------------------------------
+
+BEGIN-PRIVATE
+
+VARIABLE T-INFO    \ console buffer info structure
+6 CELLS ALLOT
+
+7 VALUE T-STDOUT   \ standard output handle
+
+0 VALUE P-SETATTR  \ different function pointers
+0 VALUE P-CONINFO
+0 VALUE P-FILLATTR
+0 VALUE P-FILLCHAR
+0 VALUE P-SETCURSOR
+
+: T-INITIALISE  \ ( -- ) initialise function pointers
+  -11 s" GetStdHandle" kernel-proc 1 run-proc to t-stdout
+  s" SetConsoleTextAttribute" kernel-proc to p-setattr
+  s" GetConsoleScreenBufferInfo" kernel-proc to p-coninfo
+  s" FillConsoleOutputAttribute" kernel-proc to p-fillattr
+  s" FillConsoleOutputCharacterA" kernel-proc to p-fillchar
+  s" SetConsoleCursorPosition" kernel-proc to p-setcursor
+;
+
+: API2 ( fp -- ) 2 run-proc drop ;  \ run API function as per function pointer
+: API5 ( fp -- ) 5 run-proc drop ;
+
+
+\ ------ Screen and cursor control -------------------------------------------
+
+: T-GETINFO  \ ( -- } fill the t-info structure
+  t-stdout t-info >far p-coninfo api2 ;
+
+: COORD>XY \ ( coord -- x y ) split coord structure
+  dup [hex] ffff and swap 16 rshift ;
+
+: XY>COORD \ ( x y -- coord ) build coord structure
+  16 lshift or ;
+
+: T-CONSIZE  \ ( -- xc yc ) get size of console buffer
+  t-getinfo t-info @ coord>xy ;
+
+0 VALUE COORD
+
+:NONAME  \ ( x y -- ) set console cursor position
+  terminal @ if
+    xy>coord t-stdout swap p-setcursor 2 run-proc
+    0= abort" impossible cursor position"
+  else 2drop then ;
+IS AT-XY
+
+:NONAME  \ ( -- ) remember the actual cursor position
+  terminal @ if t-getinfo t-info cell+ @ to coord then ;
+IS STORE-XY
+
+:NONAME  \ ( -- ) set to remembered cursor position
+  terminal @ if t-stdout coord p-setcursor api2 then ;
+IS RESTORE-XY
+
+: XY  \ ( -- x y ) get cursor coordinates
+  t-getinfo t-info cell+ @ coord>xy ;
+
+:NONAME  \ ( -- ) cursor up
+  terminal @ if
+    xy dup if 1- at-xy else 2drop then
+  then ;
+IS Y-UP
+
+:NONAME  \ ( -- ) cursor left
+  terminal @ if
+    xy swap dup if 1- swap at-xy else 2drop then
+  then ;
+IS X-LEFT
+
+:NONAME  \ ( -- ) cursor down
+  terminal @ if
+    xy t-consize nip over swap u< if 1+ at-xy else 2drop then
+  then ;
+IS Y-DOWN
+
+:NONAME  \ ( -- ) cursor right
+  terminal @ if
+    xy swap t-consize drop over swap u< if 1+ swap at-xy else 2drop then
+  then ;
+IS X-RIGHT
+
+
+\ ------ Colour control ------------------------------------------------------
+
+\ Windows consoles have a different palette
+1 TO BLUE  3 TO CYAN  4 TO RED  6 TO BROWN
+
+7 VALUE T-ATTR  \ actual text attribute
+
+: T-SETATTR  \ set terminal text attribute
+  t-stdout t-attr p-setattr api2 ;
+
+:NONAME  \ ( c -- ) set foreground text attribute
+  terminal @ if
+    15 and t-attr -16 and or to t-attr t-setattr
+  else drop then ;
+IS LETTERS
+
+:NONAME  \ ( c -- ) set background text attribute
+  terminal @ if
+    15 and 4 lshift t-attr 15 and or to t-attr t-setattr
+  else drop then ;
+IS BACKGROUND
+
+:NONAME  \ ( -- ) set standard terminal colours
+  black letters white bright background ;
+IS NORMAL
+
+
+\ ------ Clear the console ---------------------------------------------------
+
+:NONAME  \ ( -- ) clear screen
+  terminal @ if
+    t-stdout t-attr t-consize * 0 t-info 8 + >far
+    t-stdout bl 4 pick 0 4 pick p-fillchar api5 p-fillattr api5
+    t-stdout 0 p-setcursor api2
+  then ;
+IS PAGE
+
+END-PRIVATE
+
+\ ------ Initialise Windows Terminal -----------------------------------------
+
+' T-INITIALISE IS INITIALISE  \ set function pointers when booting MinForth
+
+T-INITIALISE                  \ set function pointers now
+TERMINAL ON                   \ activate terminal functions
+
+MAKE-PRIVATE
+

@@ -1,0 +1,85 @@
+(
+  * LANGUAGE    : ANS Forth 
+  * PROJECT     : Forth Environments
+  * DESCRIPTION : Magic squares demo
+  * CATEGORY    : Example 
+  * AUTHOR      : Erwin Dondorp, August 19, 1991
+  * LAST CHANGE : March 6, 1993, Marcel Hendrix, Ansification
+  * LAST CHANGE : October 10, 1991, Marcel Hendrix 
+  * )
+
+        MARKER -magic 
+
+        DECIMAL
+
+
+(  Magic squares by Erwin Dondorp
+  after a widely known algorithm:
+  - Start with value one in upper middle cell.
+  - next cell is one up and to the right, use circular wrap when passing edges
+  - if this cell is occupied, move one cell down
+  - if this cell is also occupied, stop
+)
+
+0 VALUE ORDRE            
+0 VALUE COL              
+0 VALUE ROW              
+0 VALUE ADDR             
+0 VALUE THERE            
+
+: MAGIC \ <n> --- <>
+        TO ORDRE
+
+        ORDRE 1 AND 0 = ABORT" Value should be odd"
+
+        ORDRE 99 > ORDRE 3 < OR ABORT" Value should be between 3 and 99"
+
+        ALIGN HERE TO ADDR
+        ORDRE DUP * CELLS DUP TO THERE ALLOT
+        ADDR ORDRE DUP * CELLS ERASE
+        ORDRE 2 / TO COL
+        0 TO ROW
+        ORDRE DUP * 1 + 1
+        DO
+                I ROW ORDRE * COL + CELLS ADDR + !
+                ROW 1- TO ROW
+                COL 1+ TO COL
+                COL ORDRE  < INVERT ( >= )
+                IF
+                        ORDRE NEGATE COL + TO COL
+                THEN
+                ROW 0 <
+                IF
+                        ORDRE ROW + TO ROW
+                THEN
+                ROW ORDRE * COL + CELLS ADDR + @
+                IF
+                        ROW 2+ TO ROW
+                        COL 1- TO COL
+                        ROW ORDRE MOD TO ROW
+                        COL ORDRE + ORDRE MOD TO COL
+                THEN
+        LOOP
+        CR ." Magic square "  ORDRE DUP 0 .R [CHAR] x EMIT . CR
+        ORDRE 0
+        DO 
+                ORDRE 0 CR
+                DO 
+                        ADDR J CELLS  ORDRE * + I CELLS + @
+                        ORDRE DUP * S>D <# #S #> NIP .R SPACE
+                LOOP
+        LOOP 
+        CR CR ." Sum = "
+        ORDRE DUP DUP * *  ORDRE + 2 / .
+        THERE NEGATE ALLOT ;
+
+
+: HELP  CR
+        ." Usage:  n MAGIC  for a magic square n*n" CR 
+        ."  n must be odd, >= 3, <= 99" CR
+        ."  n > 19 will be too wide for the screen" ;
+
+
+        HELP CR
+
+                              ( * End of Source * )

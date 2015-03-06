@@ -1,0 +1,50 @@
+( =======================================
+   Comparing Simple Factorial Algorithms
+  =======================================
+)
+
+REQUIRES double.mf
+
+\ --- Forth Scientific Library Algorithm #14
+
+: SD*   ( multiplicand  multiplier_double  -- product_double  )
+        2 PICK * >R   UM*   R> +
+;
+
+: FAC-FSL ( n -- d )
+        1. ROT           \ put a double 1 on stack under parameter
+        ?DUP IF
+                1 SWAP DO I ROT ROT SD* -1 +LOOP
+             THEN
+;
+
+: FACS ( d u --- )
+  CR -ROT 7 D.R
+  FAC-FSL 9 D.R
+
+\ now compare with your own definitions :-)
+
+;
+
+: FACTORIAL-TEST ( --- )
+  CR ." RESULT:  DO-LOOP  RECURSION  BEGIN-UNTIL"
+  CR ." ----------------------------------------"
+       1. 0 FACS
+       1. 1 FACS
+       2. 2 FACS
+       6. 3 FACS
+      24. 4 FACS
+     120. 5 FACS
+     720. 6 FACS
+    5040. 7 FACS
+   40320. 8 FACS
+  362880. 9 FACS
+;
+
+CR .( ======================================== )
+CR .(  MinForth Factorial Algorithms Examples )
+CR .( ======================================== )
+
+FACTORIAL-TEST
+CR
+.( Try to fill the missing columns by yourself! )

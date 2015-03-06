@@ -1,0 +1,31 @@
+\ UPPER -- small DOS filter program example in MinForth
+\ Make: mf /i kernel fload upper
+\ Task: convert input text stream to upper chars
+
+VARIABLE CC
+
+: FILTER ( a u -- )
+  here count                        \  a u -- parameter line
+  dup 0= IF 2drop s" stdin" THEN    \  allow for redirection
+  set-source >in off bl parse-word  \  a u -- filename
+  fopen >r BEGIN  cc 1 r@ fread
+           WHILE  cc 1 upper 2drop cc c@ emit  REPEAT
+  r> fclose ;
+
+:NONAME  ( -- )
+\  filter bye ;
+  ['] filter catch os-return ;
+IS (MAIN)
+
+S" upper.i" SAVE-IMAGE
+S" copy ..\mf.exe upper.exe" OS-COMMAND DROP
+
+CR .( Usage: upper <file|stream> )
+CR .( Examples: )
+CR .(     filter a named file:             upper file.txt     )
+CR .(     filter a file by redirection:    upper < file.txt   )
+CR .(     filter in a pipe:                dir | upper | sort )
+
+BYE
+
+

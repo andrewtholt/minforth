@@ -1,0 +1,1684 @@
+\ ============================================================================
+\  KERNEL.MFC  source code file for meta-compilation of the MinForth kernel
+\ ============================================================================
+
+\     With respects to Henry Laxen and Michael Perry for their works on
+\     "good ole" F83.
+
+\ This is the first source file. It is processed by the METACOMP program to
+\ build the MinForth system kernel. The kernel system is started with the
+\ shell command 'mf /i kernel'.
+
+\ The full MinForth system is built from the kernel by including the second
+\ source file 'system.mf'. You can use the shell script 'extend' for that.
+\ Or just type FLOAD EXTEND <cr> when you are in the kernel.
+
+\ Files: KERNEL.MFC pseudo-Forth code for the METACOMP crosscompiler
+\        EXTEND.MF  real Forth code to build a MinForth system
+\        xxx.MF     other Forth source files that can be included
+
+\ The METACOMP program is written in ANSI C for easy porting of MinForth.
+\ METACOMP understands only some few commands. All of them begin with an
+\ _underscore. Many of them have a prefix syntax (unlike their Forth
+\ counterparts) to make the metacomp program simpler. E. g.
+\ METACOMP: _const TRUE -1
+\ Forth:    -1 CONSTANT TRUE
+\ METACOMP also knows nothing of immediate words, so be careful!
+
+\ Warning:
+\ Do NOT modify any system variables in codespace address below address 56,
+\ because they are used by the metacompiler and the image loader.
+
+
+\  Copyright (C) 2003  Andreas Kochenburger (kochenburger@gmx.de)
+\
+\  This program is free software; you can redistribute it and/or modify
+\  it under the terms of the GNU General Public License as published by
+\  the Free Software Foundation; either version 2 of the License, or
+\  (at your option) any later version.
+\
+\  This program is distributed in the hope that it will be useful,
+\  but WITHOUT ANY WARRANTY; without even the implied warranty of
+\  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+\  GNU General Public License for more details.
+\
+\  You should have received a copy of the GNU General Public License
+\  along with this program; if not, write to the Free Software
+\  Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
+
+
+\ ====== The MinForth Kernel =================================================
+
+_defer (BOOT)    \ check host system conditions (called from address 0)
+                 \ (MinForth starts here with IP=0)
+
+_defer (MAIN)    \ boot and start MinForth system (called from address 4)
+
+_defer (BYE)     \ cleanup and return to host OS (called from address 8)
+                 \ (address 12 contains -1 to end MinForth)
+
+
+\ ------ System variables that can be set by the User ------------------------
+
+_user NAMES           16  \ begin of namespace (codespace size)
+        _store        16  100000
+
+_user HEAP            20  \ begin of heapspace
+        _store        20  160000
+
+_user LIMIT           24  \ total size of available MinForth address space
+        _store        24  250000
+
+_user SPMAX           28  \ max. size of datastack in cells
+        _store        28  128
+
+_user FPMAX           32  \ max. size of floating stack in double cells
+        _store        32  32
+
+_user RPMAX           36  \ max. size of returnstack in cells
+        _store        36  128
+
+
+\ ------ Debug / Exception support -------------------------------------------
+
+_user (THROW)         40  \ cfa of hilevel exception handler, used by MF
+
+_user (DEBUG)         44  \ cfa to start lolevel singlestepping debugger
+
+_user (CLOCK)         48  \ counter
+
+
+\ ------ System variables initialised by METACOMP ----------------------------
+
+_user  DP             52  \ dictionary pointer to codespace
+
+_user  DP-N           56  \ namespace dictionary pointer (relative to NAMES)
+
+
+\ ============================================================================
+\ ============================================================================
+
+_user  LAST           60  \ CFA of last created word
+
+_user  LAST-N         64  \ NS-NFA of last created header (relative)
+
+_user  ROOT-WORDLIST  68  \ 3 cells for root wordlist
+
+_user  TEMP-WORDLIST  80  \ 2 cells for temporary wordlist
+
+_user  CURRENT        88  \ holds wordlist body that gets definitions
+
+_user  CONTEXT        92  \ #vocs cells array holding searched wordlists
+
+_user  LAST-LINK     124  \ thread of last created header
+
+_user  VOC-LINK      128  \ pointer to first wordlist in vocabulary chain
+
+_user  FILE-LINK     132  \ last viewfile
+
+
+\ ====== Basic system variables set up during BOOT ===========================
+
+_user  'BCB           136  \ address of 2 block buffers (used in BLOCK.MF)
+
+_user  'FCB           140  \ address of 8 file control blocks
+
+_user  'SIB           144  \ address of 2 string buffers
+
+_user  'TIB           148  \ address of 1 terminal input buffer
+
+
+\ ------ System Variables from 152 to 256 ------------------------------------
+
+_user  TP             152  \ pointer to first temporary header
+
+_user  TEMP           156  \ flag when compiling temporary words
+
+_user  STATE          160  \ the most famous compilation flag
+
+_user  BASE           164  \ current number base
+
+_user  CAPS           168  \ flag for parsed string conversion to uppercase
+
+_user  DPL            172  \ double point location after number conversions
+
+_user  HLD            176  \ used for number conversion
+
+_user  SPAN           180  \ character count after EXPECT and ACCEPT
+
+_user  #TIB           184  \ length of TIB
+
+_user  HANDLER        188  \ returnstack depth of last exception frame
+
+_user  FOUND          192  \ 2 cells found header addresses of last search
+
+_user  (SOURCE)       200  \ 2 cells current input buffer address and length
+
+_user  (SOURCE-ID)    208  \ source-id variable >0=file 0=terminal -1=string
+
+_user  (FID)          212  \ last used file identifier (1 to 8)
+
+_user  DISK-ERROR     216  \ holds ior after disk access error
+
+_user  BLK            220  \ current input block number
+
+_user  >IN            224  \ current input buffer position
+
+_user  END?           228  \ input stream end flag
+
+_user  FENCE          232  \ HERE after BOOT, prevents FORGETting too much
+
+_user  (KEY)          236  \ holds pending input characters
+
+_user  (ENV)          240  \ holds flag during environmental queries
+
+_user  SIGNED         244  \ type + sign if flag set
+
+_user  ECHO           248  \ echo source lines to stdout when on
+
+_user  HP             252  \ points to latest allocated memory block
+
+
+\ ------ Important elementary definitions ------------------------------------
+
+_: NOOP _;      \ does faithfully what it says
+_refers (BOOT)  \ initialize with NOOP otherwise MinForth won't start
+_refers (BYE)
+
+_defer  THROW   \ ( n -- .. ) pop topmost exception frame from stack if n<>0
+
+_code   TRACE   _trace  \ ( -- ) start singlestepping debugger/tracer
+
+
+\ ------ Hilevel links to lolevel functions ----------------------------------
+
+_code PRIM>XT   _prim>xt   \ ( a u -- xt t | f ) get primitive exec. token
+
+_code XT>PRIM   _xt>prim   \ ( xt buf -- flag ) write primitive name to buf
+
+_code TC>ERRMSG _tc>errmsg \ ( tc buf -- flag ) write message for throwcode
+
+
+\ ------ Operating system interface ------------------------------------------
+
+_code OS-COMMAND  _oscommand \ ( adr u -- flag ) execute OS-command string
+
+_code OS-RETURN   _osreturn  \ ( retcode -- ) leave MinForth with return code
+
+_code OS-TYPE     _ostype    \ ( -- id ) get OS type identifier
+
+_code GETENV      _getenv    \ ( adr u buf -- flag ) read environment variable
+
+_code PUTENV      _putenv    \ ( adr u -- flag ) set environment variable
+
+
+\ ------ Compilable Primitives -----------------------------------------------
+
+_code [CONST]   _doconst  \ push following cell constant
+
+_code [VALUE]   _dovalue  \ push following cell value
+
+_code [VAR]     _dovar    \ push following cell address
+
+_code [USER]    _douser   \ push following user variable address
+
+_code [VECT]    _dovect   \ pass to following cfa
+
+_code [NEST]    _nest     \ push next IP on returnstack, continue at next W
+
+_code [UNNEST]  _unnest   \ pop next IP from returnstack, continue there
+
+_code [LIT]     _lit      \ push following inline cell value
+
+_code [SLIT]    _slit     \ push following inline string addr and ct
+
+_code [TICK]    _tick     \ push following inline cfa like LIT
+
+_code [BRANCH]  _jmp      \ branch always, don't consume TOS
+
+_code [ZBRANCH] _jmpz     \ branch when TOS=0
+
+_code [VBRANCH] _jmpv     \ add TOS to TORS and branch if overflow occurred
+
+
+\ ------ Some useful constants -----------------------------------------------
+
+_const 0 0  _const 1 1  _const 2 2  _const 3 3  _const 4 4  _const 8 8
+_const -1 -1
+
+_const TRUE -1  _const FALSE 0  \ flag constants
+
+
+\ ------ Stack Initializations -----------------------------------------------
+
+_code DEPTH   _depth   \ ( -- n ) number of elements on data stack
+
+_code SP!     _spstore \ ( n -- ) set data stack depth to n
+
+_code FDEPTH  _fdepth  \ ( -- n ) number of elements on floating-point stack
+
+_code FP!     _fpstore \ ( n -- ) set floating-point stack depth to n
+
+_code RDEPTH  _rdepth  \ ( -- n ) number of elements on return stack
+
+_code RP!     _rpstore \ ( n -- ) set return stack depth to n
+              _compile-only
+
+_: EMPTY-STACKS  \  ( -- ) reset data and floating-point stacks
+   0 sp! 0 fp! _;
+
+
+\ ------ Returnstack Operations ----------------------------------------------
+
+_code >R        \ ( n -- |R -- n ) move TOS to returnstack
+   _tor       _compile-only
+
+_code R>        \ ( -- n |R n -- ) move TORS to datastack
+   _rfrom     _compile-only
+
+_code RPICK     \ ( i -- ri |R ri..r0 -- ri..r0 )
+   _rpick       \ copy i-th returnstack element to the datastack
+
+_:    R@        \ ( -- n |R n -- n ) copy TORS to datastack
+   1 rpick _;
+
+
+\ ---- Datastack Operations --------------------------------------------------
+
+_code DROP    _drop              \ ( n -- ) discard TOS
+
+_code DUP     _dup               \ ( n1 -- n1 n1 ) duplicate TOS
+
+_:    ?DUP    dup _IF dup _THEN _; \ ( n f -- n | n n ) if flag set dupl. TOS
+
+_code PICK    _pick       \ ( nm ... n1 n0 k -- nm ... n1 n0 nk )
+                          \ put a copy of k-th stack element on TOS
+
+_code OVER    _over       \ ( n1 n2 -- n1 n2 n1 ) copy SECOND on TOS
+
+_:    PLUCK   2 pick _;   \ ( n1 n2 n3 -- n1 n2 n3 n1 ) copy THIRD on TOS
+
+_code SWAP    _swap       \ ( n1 n2 -- n2 n1 ) exchange TOS with SECOND
+
+_code ROLL    _roll       \ ( nk nj .. n0 k -- nj .. n0 nk )
+                          \ roll top k stack elements
+
+_code ROT     _rot        \ ( n1 n2 n3 -- n2 n3 n1 ) roll top 3 elements
+
+_:    -ROT    rot rot _;  \ ( n1 n2 n3 -- n3 n1 n2 ) roll 3 backwards
+
+_:    NIP     swap drop _; \ ( n1 n2 -- n2 ) discard SECOND
+
+_:    TUCK    swap over _; \ ( n1 n2 -- n2 n1 n2 ) stuff TOS below SECOND
+
+_:    2DUP    over over _; \ ( n m -- n m n m ) paired DUP
+
+_:    2DROP   drop drop _; \ ( n m  -- ) paired drop
+
+_:    2OVER   3 pick 3 pick _; \ ( a b n m -- a b n m a b ) paired OVER
+
+_:    2SWAP   3 roll 3 roll _; \ ( a b n m -- n m a b ) paired SWAP
+
+_:    3DUP    pluck pluck pluck _; \ ( a b c -- a b c a b c ) dup triple
+
+_:    3DROP   drop drop drop _; \ ( a b c -- ) drop triple
+
+_:    2>R     \ ( a b -- |R a b ) paired >R
+      r> rot >r swap >r >r _; _compile-only
+
+_:    2R>     \ (R a b -- |S a b ) paired R>
+      r> r> r> rot >r swap _; _compile-only
+
+_:    2R@     \ (R a b -- a b |S -- a b ) paired R@
+      2 rpick 1 rpick _;
+
+
+\ ------ Bitwise Operations --------------------------------------------------
+
+_code AND     _and         \ ( n1 n2 -- n3 ) binary AND
+
+_code OR      _or          \ ( n1 n2 -- n3 ) binary OR
+
+_code XOR     _xor         \ ( n1 n2 -- n3 ) binary XOR
+
+_:   INVERT   true xor _;  \ ( n -- n' ) one's complement
+
+_code LSHIFT  _lshift      \ ( n ct -- n<<ct ) shift left and refill with 0s
+
+_code RSHIFT  _rshift      \ ( n ct -- n>>ct ) shift right and refill with 0s
+
+
+\ ------ Logical Operations --------------------------------------------------
+
+_ALIAS NOT invert     \ ( n -- ~n ) toggle flags
+
+_code <    _less      \ ( n m -- f ) true if n < m
+
+_:    >    swap < _;  \ ( n m -- f ) true if n > m
+
+_code =    _equal     \ ( n m -- f ) true if n = m
+
+_code U<   _uless     \ ( u1 u2 -- f ) true if u1 < u2 unsigned
+
+_:    U>   swap u< _; \ ( u1 u2 -- f ) true if u1 > u2 unsigned
+
+_:    0=   0 = _;     \ ( n -- f ) true if all bits in n are set to 0
+
+_:    0<>  0 u> _;    \ ( n -- f ) true if at least one bit in n is set
+
+_:    0<   0 < _;     \ ( n -- f ) true if n is a negative number
+
+_:    0>   0 > _;     \ ( n -- f ) true if n is a positive numer > 0
+
+_:    0<=  1 < _;     \ ( n -- f ) true if n <= 0
+
+_:    0>=  -1 > _;    \ ( n -- f ) true if n >= 0
+
+_:    >=   < not _;   \ ( n1 n2 -- f ) true if n1 >= n2
+
+_:    <=   > not _;   \ ( n1 n2 -- f ) true if n1 <= n2
+
+_:    <>   = not _;   \ ( n1 n2 -- f ) true if n1 <> n2
+
+
+\ ------ Integer Adding/Subtracting ------------------------------------------
+
+_code +       _plus       \ ( n1 n2 -- sum ) add n2 to n1
+
+_code -       _minus      \ ( n1 n2 -- sub ) subtract n2 from n1
+
+_:    negate  0 swap - _; \ ( n -- -n ) negate n or two's complement
+
+_:    1+      1 + _;      \ ( n -- n+1 ) increment n
+
+_:    1-      1 - _;      \ ( n -- n-1 ) decrement n
+
+_:    2+      2 + _;      \ ( n -- n+2 ) double-increment n
+
+_:    ?NEGATE 0< _IF negate _THEN _; \ ( n v -- n|-n ) negate n if v negative
+
+_:    ABS     dup ?negate _; \ ( n -- |n| ) make n absolute
+
+_:    MIN     \ ( n1 n2 -- n1|n2 ) discard the bigger number
+      2dup > _IF swap _THEN drop _;
+
+_:    MAX     \ ( n1 n2 -- n1|n2 ) discard the smaller number
+      2dup < _IF swap _THEN drop _;
+
+_:    WITHIN  \ ( t min max -- flag ) true if min <= t < max
+      over - >r - r> u< _;
+
+
+\ ------ Integer Multiplying/Dividing ----------------------------------------
+
+_code *    _star        \ ( n m -- prod ) multiply m to n
+
+_code /MOD _divmod      \ ( n m -- r q ) divide and get remainder & quotient
+
+_:    /    /mod nip _;  \ ( n m -- quot ) divide n by m
+
+_:    MOD  /mod drop _; \ ( n m -- rem ) get n modulus m
+
+_:    2*   1 lshift _;  \ ( n -- 2*n ) multiply by 2
+
+_:    2/   dup invert _IF 2 / _THEN _;  \ this is a signed rightshift!
+
+
+\ ------ Double & Mixed Arithmetics ------------------------------------------
+
+_code D+      _dplus    \ ( d1 d2 -- dsum ) add d2 to d1
+
+_code DNEGATE _dnegate  \ ( d -- -d ) negate d
+
+_code MU*     _mustar   \ ( ud u -- udprod ) multiply u to ud
+
+_code MU/MOD  _mudivmod \ ( ud u -- urem udquot ) unsigned double division
+
+_:    S>D     dup 0< _; \ ( n -- d ) convert single to double number
+
+_: DABS    \ ( d -- |d| ) make d absolute
+   dup 0< _IF dnegate _THEN _;
+
+_: UM*     \ ( u1 u2 -- ud ) unsigned multiplication with double result
+   0 swap mu* _;
+
+_: M*      \ ( n1 n2 -- d ) signed multiplication with double result
+   2dup xor >r abs swap abs um* r> 0< _IF dnegate _THEN _;
+
+_: UM/MOD  \ ( ud u -- r q ) unsigned double division by single divisor
+   mu/mod drop _;
+
+_: SM/REM  \ ( d m -- r q ) signed symmetric division
+   over >r >r dabs r@ abs um/mod r> r@ xor ?negate swap r> ?negate swap _;
+
+_: FM/MOD  \ ( d m -- r q ) signed floored division
+   dup >r sm/rem 2dup 0< and _IF 1- swap r> + swap _ELSE r> drop _THEN _;
+
+_: */MOD   \ ( n1 n2 n3 -- r q ) n1*n2/n3 with double intermediate result
+   >r m* r> sm/rem _;
+
+_: */      \ ( n1 n2 n3 -- q ) n1*n2/n3 with double intermediate result
+   */mod nip _;
+
+
+\ ------ Memory Adressing ----------------------------------------------------
+
+_ALIAS CELL    4            \ ( -- cellsize )
+
+_:     CELLS   cell * _;    \ ( n -- cellsize(n) ) bytesize of n cells
+
+_:     CELL+   cell + _;    \ ( celladr -- nextcelladr ) advance by one cell
+
+_:     CELL-   cell - _;    \ ( celladr -- prevcelladr ) retreat by one cell
+
+_ALIAS CHARS   noop         \ ( n -- charsize(n) ) bytesize of n chars
+
+_ALIAS CHAR+   1+           \ ( charadr -- nextcharadr ) advance by one char
+
+_ALIAS CHAR-   1-           \ ( charadr -- prevcharadr ) retreat by one char
+
+
+\ ------ 32 and 8 bit Memory Access ------------------------------------------
+
+_code @     _at        \ ( addr -- n ) fetch cell n from address addr
+
+_code !     _store     \ ( n addr -- ) store n in cell at address addr
+
+_:    ON    true swap ! _;  \ ( addr -- ) set all bits to 1 in cell at addr
+
+_:    OFF   false swap ! _; \ ( addr -- ) set all bits to 0 in cell at addr
+
+_code C@    _cat       \ ( addr -- char ) fetch char from address addr
+
+_code C!    _cstore    \ ( char addr -- ) store char in address addr
+
+_code FILL  _fill      \ ( addr u char -- ) fill address range with chars
+
+_code MOVE  _move      \ ( from to count -- ) move address range block
+
+_:    2@    \ ( addr -- n2 n1 ) fetch cellpair from address addr
+      dup cell+ @ swap @ _;
+
+_:    2!    \ ( n2 n1 addr ) store cellpair at address addr, n1 first
+      swap over ! cell+ ! _;
+
+
+\ ------ Memory arithmetics --------------------------------------------------
+
+_: +!       dup @ rot + swap ! _; \ ( n addr -- ) add n to word at addr
+
+_: INCR     1 swap +! _;          \ ( addr --- ) increment word at addr
+
+_: DECR     -1 swap +! _;         \ ( addr --- ) decrement word at addr
+
+_: NS>CS    \ ( nsadr -- csadr ) convert namespace to codespace address
+   names @ + _;
+
+_: CS>NS    \ ( csadr -- nsadr ) convert codespace to namespace address
+   names @ - _;
+
+_: HERE     dp @ _;  \ ( -- adr ) address referred to by dictionary pointer
+
+_: N-HERE   dp-n @ ns>cs _;  \ ( -- adr ) address of next free namespace cell
+
+_: ALIGNED  3 + -4 and _; \ ( adr -- aladr ) provide next cell-aligned address
+
+_: ALIGN    dp @ aligned dp ! _; \ ( -- ) cell-align codespace dp
+
+_: ALLOT    \ ( n -- ) advance codespace dictionary pointer
+   dp +! _;
+
+_: PAD             \ ( -- adr ) user scratchpad
+   here 324 + _;   \ room for 256 bytes + 66 bytes for number conversion
+
+_: UNUSED    \ ( -- u ) free bytes in codespace
+   names @ pad 1024 + - _;  \ 1 k bytes after PAD area
+
+_: UNUSED-N  \ ( -- u ) free bytes in namespace
+   tp @ n-here 262 + - _;  \ 256 bytes + 3 cells after last header
+
+_: UNUSED-H  \ ( -- u ) free bytes in heapspace
+   0 >r limit @ hp @
+   _BEGIN 2dup - over cell+ @ 8 + - r> + >r
+          nip dup @ dup 0=
+   _UNTIL 2drop r> _;
+
+\ ------ Strings --------------------------------------------------------------
+
+\ Note: SCAN and TRIM interpret control chars < 32 as bl = 32 when char = bl
+
+_code SCAN    _scan    \ ( adr len c -- adr' len') scan for a char
+
+_code TRIM    _trim    \ ( adr len c dir -- adr' len') trim lead/trailing chars
+
+_code UPPER   _upper   \ ( adr len -- adr len ) convert to upper case
+
+_code COMPARE _compare \ ( adr1 u1 adr2 u2 -- -1|0|+1) compare two strings
+
+_: ERASE   \ ( addr len -- ) fill address range with zeroes
+   0 fill _;
+
+_: COUNT   \ ( caddr -- saddr ct ) address and length of a counted string
+   dup char+ swap c@ _;
+
+_: CHAR/   \ ( adr ct -- adr+1 ct-1 ) behead sting by its first char
+   dup _IF 1- swap char+ swap _THEN _;
+
+_: BUILD   \ ( adr a u -- adr+u ) build a string in memory at adr
+   swap pluck pluck move + _;
+
+_: PLACE   \ ( adr len toadr -- ) place a counted string at address toadr
+   over 256 u< _IF rot over char+ 3 pick move c! _EXIT _THEN -24 throw _;
+
+_: SPLACE  \ ( adr len toadr -- ) place a counted stringz at address toadr
+   2dup + char+ >r place 0 r> c! _;
+
+
+\ ------ Keyboard Input ------------------------------------------------------
+
+_code RAWKEY? _rawkeyq    \ ( -- flag ) true if keyboard event is waiting
+
+_code RAWKEY  _rawkey     \ ( -- code ) receive one raw keyboard event
+
+_defer ekey? \ ( -- flag ) true if keyboard event is waiting
+_refers rawkey?
+
+_defer ekey  \ ( -- char ) get next raw keyboard event
+_:NONAME _BEGIN rawkey? _UNTIL rawkey _;
+_refers ekey
+
+_: EKEY>CHAR \ ( u -- u false | char true ) true if u is allowed character
+   dup 32 256 within _;
+
+_: KEY? \ ( -- flag ) inspect queue for a char, destroying non-chars
+   (key) @ _IF true _EXIT _THEN
+   _BEGIN ekey?
+   _WHILE ekey dup 1 256 within _IF (key) ! true _EXIT _THEN
+          drop
+   _REPEAT false _;
+
+_: KEY   \ ( -- char ) receive one allowed character
+   _BEGIN key? _UNTIL (key) @ (key) off _;
+
+
+\ ------ Terminal Output -----------------------------------------------------
+
+_code EMIT?    _emitq  \ ( -- flag ) true if output console ready for output
+
+_code TYPE     _type   \ ( adr u -- ) emit a character string to console
+
+\ _: TYPE   \ ( adr u -- ) emit a character string to stdout
+\    stdout hwrite drop _; \ succeeds always
+
+_: EMIT      \ ( char -- ) emit a single character to console
+   _" c rot pluck c! type _;
+
+_const BL    32  \ ( -- space character code )
+
+_const BS     8  \ ( -- backspace code )
+
+_: SPACE     bl emit _;  \ ( -- ) emit a blank space sign
+
+_: SPACES    \ ( n -- ) emit n blank spaces
+   _BEGIN dup 0> _WHILE space 1- _REPEAT drop _;
+
+_: BACKSPACE bs emit _;            \ ( -- ) go back by one char position
+
+_: CR       0x0d emit 0x0a emit _; \ ( -- ) start new output at new line
+
+_: BEEP     0x07 emit _;           \ ( -- ) ring the terminal bell
+
+
+\ ------ String to Number Conversion -----------------------------------------
+
+_: HEX         16 base !  _; \ ( -- ) set number base to hexadecimal
+
+_: DECIMAL     10 base !  _; \ ( -- ) set number base to decimal
+
+_: >NUMBER  \ ( +ud1 adr1 u1 -- +ud2 adr2 u2 ) convert string to number
+   _BEGIN dup
+   _WHILE over c@ _" 0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ rot scan
+          36 swap - nip dup base @ <
+          _IF >r 2swap base @ mu* r> 0 d+ 2swap char/
+          _ELSE drop _EXIT _THEN
+   _REPEAT _;
+
+_: CONVERT   \ ( +ud1 adr1 -- +ud2 adr2 ) continue conversion until non-digit
+   char+ -1 >number drop _;
+
+_: >DOUBLE  \ ( adr u -- d true | false ) convert string to double
+   dpl on false -rot
+   over c@ dup 43 = _IF drop char/ _ELSE  \ + sign
+               45 = _IF rot drop true -rot char/ _THEN _THEN  \ - sign
+   0 0 2swap >number dup
+   _IF over c@ 46 <> _IF 2drop 3drop false _EXIT _THEN
+       dup 1- dpl ! char/ >number dup
+       _IF dpl on 2drop 3drop false _EXIT _THEN
+   _THEN
+   2drop rot _IF dnegate _THEN true _;
+
+
+\ ------ Number to String Conversion -----------------------------------------
+
+_: HOLD   \ ( char -- ) hold converted digit in transient region below PAD
+   hld decr hld @ c! _;
+
+_: <#     pad hld ! _; \ ( d -- d ) start double number to string conversion
+
+_: #      \ ( d -- d' ) calculate next higher digit
+   base @ mu/mod rot dup 9 > _IF 7 + _THEN 48 + hold _;
+
+_: #>     \ ( d -- addr len ) get converted string from transient region
+   2drop hld @ pad over - _;
+
+_: SIGN   \ ( sf -- ) prepend a minus-sign for negative numbers
+   0< _IF 45 hold _EXIT _THEN
+   signed @ _IF 43 hold _THEN _;
+
+_: #S     \ ( -- ) continue conversion until finished
+   _BEGIN # 2dup or 0= _UNTIL _;
+
+
+\ ------ Number Output -------------------------------------------------------
+
+_: (U.)   \ ( u -- addr len ) convert unsigned single number
+   0 <# #s #> _;
+
+_: U.     \ ( u -- ) display unsigned single number
+   (u.) type space _;
+
+_: U.R    \ ( u w -- ) display u right-aligned in a w-wide field
+   >r (u.) r> over - spaces type _;
+
+_: (.)    \ ( -- addr len ) convert signed single number
+   dup abs 0 <# #s rot sign #> _;
+
+_: .      \ ( x -- ) display signed single number
+   (.) type space _;
+
+_: .R     \ ( n w -- ) display signed n right-aligned in a w-wide field
+   >r (.) r> over - spaces type _;
+
+_: ?      \ ( adr -- ) display the cell content
+   @ . _;
+
+
+\ ------ Unbuffered File Access with Handles ---------------------------------
+
+_code NOPEN   _nopen   \ ( adr u fam -- hndl ior ) open file
+
+_code NRENAME _nrename \ ( a u anew unew -- ior ) rename file
+
+_code NDELETE _ndelete \ ( adr u -- ior ) delete file
+
+_code NSTAT   _nstat   \ ( a u -- x ior ) get file access status
+                       \ for using x you must know your st_mode bits
+
+_code HCLOSE  _hclose  \ ( hndl -- ior ) close file
+
+_code HSEEK   _hseek   \ ( pos hndl -- ior ) set file pointer
+
+_code HTELL   _htell   \ ( hndl -- pos ior ) get file pointer
+
+_code HSIZE   _hsize   \ ( hndl -- size ior ) get file size
+
+_code HCHSIZE _hchsize \ ( newsize hndl -- ior ) change file size
+
+_code HREAD   _hread   \ ( adr u hndl -- uread ior ) read bytes
+
+_code HWRITE  _hwrite  \ ( adr u hndl -- ior ) write bytes
+
+_const STDIN  0  \ the famous standard handles
+_const STDOUT 1
+_const STDERR 2
+
+
+\ ------ Buffered ANS-like File Access ---------------------------------------
+
+\ --- File control block and buffer structure: (336)
+\ hndl = file handle (4)
+\ name = 68 byte ct-filename-z (64)
+\ lctr = line counter (4)
+\ lbuf = 132 byte line buffer (256+4)
+
+_const B/FCB  336  \ bytes per fcb
+
+_: FCB  'fcb @ _;  \ ( -- adr ) file control blocks
+
+_: F>NAME  4 + _;  \ ( fcb-adr -- adr ) filename in fcb
+
+_: F>LCTR 72 + _;  \ ( fcb-adr -- adr ) linecounter in fcb
+
+_: F>LBUF 76 + _;  \ ( fcb-adr -- adr ) linebuffer in fcb
+
+_: FID>FCB  \ ( fid -- fcb-adr ) convert file-id to fcb address
+   1- b/fcb * fcb + _;
+
+_: GET-FID  \ ( -- fid ) get a free fcb, fid=0 means no free fcb
+   8 _BEGIN dup fid>fcb @ 0<> over and _WHILE 1- _REPEAT _;
+
+_: ?FCB  \ ( fid -- fcb-adr true | -1 false ) check and convert file-id
+   dup 1 9 within _IF
+      dup fid>fcb dup @ _IF swap (fid) ! true _EXIT _THEN drop
+   _THEN drop -1 false _;
+
+_const R/O 0      \ read-only flag
+
+_const W/O 1      \ write-only flag
+
+_const R/W 2      \ read-write flag
+
+_: BIN 4 or _;    \ ( fam -- famb ) modify file access method to binary
+
+_: OPEN-FILE  \ ( nadr u fam -- fileid ior ) open a file by its name
+   get-fid dup 0= _IF drop 3drop 0 -1 _EXIT _THEN  \ adr u fam fid
+   dup (fid) ! >r >r 2dup r> nopen  \ adr u hndl ior | fid
+   ?dup _IF >r 3drop 2r> _EXIT _THEN
+   r@ fid>fcb tuck ! f>name splace r> 0 _;
+
+_: CREATE-FILE  \ ( nadr u fam -- fileid ior ) create a new file with name
+   pluck pluck 8 nopen  \ adr u fam hndl ior
+   dup _IF 2>r 3drop 2r> _EXIT _THEN
+   drop hclose drop open-file _;
+
+_: CLOSE-FILE  \ ( fid -- ior ) close a file
+   ?fcb _IF dup @ hclose dup _IF nip _EXIT _THEN
+            swap dup off f>lctr off  \ unmark fcb but keep last content
+        _THEN _;
+
+_: READ-FILE  \ ( buf-adr u fid -- uread ior ) read into a buffer
+   ?fcb _IF @ hread _EXIT
+        _THEN >r 3drop 0 r> _;
+
+_: READ-LINE  \ ( buf-adr u fid -- uread flag ior) read a line into a buffer
+   3dup read-file  \ adr u fid ur ior
+   ?dup _IF >r >r 3drop r> false r> _EXIT _THEN \ adr u fid ur, read error
+   rot over 0= and _IF 3drop 0 false 0 _EXIT _THEN \ adr fid ur, file end
+   rot dup rot 0x0a scan \ fid a a' u'
+   >r 2dup u< _IF dup 1- c@ 0x0d = _IF 1- _THEN _THEN
+   - negate swap r> \ u2 fid u'
+   dup _IF 1- _THEN swap fid>fcb @  \ u' u" hndl
+   dup htell drop rot - swap hseek drop  \ adjust filepointer
+   true 0 _;
+
+_: WRITE-FILE  \ ( buf-adr u fid -- ior ) write from a buffer
+   ?fcb _IF @ hwrite _EXIT
+        _THEN >r 2drop r> _;
+
+_: WRITE-LINE  \ ( buf-adr u fid -- ior ) write a line from a buffer
+   ?fcb _IF @ dup >r hwrite
+            _" cc over 0x0d over c! char+ 0x0a swap c!
+            \  0x0a0d ebuf ! ebuf 2
+            r> hwrite or _EXIT
+        _THEN >r 2drop r> _;
+
+_: REPOSITION-FILE  \ ( ud fid -- ior ) set new file pointer
+   ?fcb _IF nip @ dup htell
+            ?dup    _IF >r 3drop r> _EXIT _THEN
+            pluck = _IF 2drop 0 _EXIT _THEN
+            hseek _EXIT
+        _THEN nip nip _;
+
+_: FILE-POSITION  \ ( fid -- ud ior ) get file pointer
+   ?fcb _IF @ htell >r s>d r> _EXIT
+        _THEN dup dup _;
+
+_: FILE-SIZE  \ ( fid -- ud ior ) get file size
+   ?fcb _IF @ hsize >r s>d r> _EXIT
+        _THEN dup dup _;
+
+_: RESIZE-FILE  \ ( ud fileid -- ior ) change file size
+   ?fcb _IF nip @ hchsize _EXIT
+        _THEN >r 3drop r> _;
+
+_: FLUSH-FILE  \ ( fileid -- ior ) flush buffers
+   ?fcb nip _;  \ for unbuffered I/O always ok
+
+_alias RENAME-FILE nrename  \ ( aold uold anew unew -- ior ) rename a file
+
+_alias DELETE-FILE ndelete  \ ( nadr u -- ior ) delete a file
+
+_alias FILE-STATUS nstat    \ ( a u -- x ior ) get file status information
+
+
+\ ------ MinForth File Access Words ------------------------------------------
+
+_: FID>NAME  \ ( fid -- a u) get the file name
+   fid>fcb f>name count upper dup 0= _IF 2drop _" <unknown> _THEN _;
+
+_: ?DISK-ABORT  \ ( flag a u -- ) abort after file access error
+   rot _IF here char+ (fid) @ fid>name build
+           _" _file_ build -rot build _" _error build
+           here - here c! -2 throw
+       _THEN 2drop _;
+
+_: FOPEN  \ ( adr u -- fid )  open a file
+   r/w bin open-file _" open ?disk-abort _;
+
+_: FCREATE  \ ( adr u -- fid ) create a new file
+   r/w bin create-file _" create ?disk-abort _;
+
+_: FCLOSE  \ ( fid -- ) close a file
+   close-file _" close ?disk-abort _;
+
+_: FCLOSE-ALL  \ ( -- ) close all open files
+   8 _BEGIN dup close-file drop 1- dup 0= _UNTIL drop _;
+
+_: FSEEK  \ ( u fid -- ) reposition file pointer
+   0 swap reposition-file _" seek ?disk-abort _;
+
+_: FSIZE  \ ( fid -- u ) get file size
+   file-size nip _" size ?disk-abort _;
+
+_: FREAD  \ ( bufadr u fid -- uread ) read into a buffer
+   read-file _" read ?disk-abort _;
+
+_: FWRITE  \ ( a u fid -- ) write from a buffer
+   write-file _" write ?disk-abort _;
+
+_: FREADLN  \ ( fid -- a u flag ) read a line ready to interpret
+   dup fid>fcb f>lctr tuck cell+ char+ 255 rot
+   read-line _" line_read ?disk-abort
+   >r dup 255 = _" linebuffer_overflow ?disk-abort
+   >r dup incr cell+ r@ over c! char+ dup r@ + off r> r> _;
+
+_: FWRITELN  \ ( a u fid -- ) write a line from a buffer
+   write-line _" line_write ?disk-abort _;
+
+
+\ ------ Terminal Input Source -----------------------------------------------
+
+_: CHAR-IN  \ ( a amax cur key -- ditto ) handle input characters
+   over 3 pick = _IF _EXIT _THEN \ buffer full
+   swap 2dup c! dup 4 pick - span @ = _IF span incr _THEN
+   char+ swap dup emit _;
+
+_defer CTRL-IN  \ ( a amax cur key -- ditto ) handle control characters
+_:NONAME dup bs =
+   _IF 3 pick pluck = _IF _EXIT _THEN
+       >r char- span decr bl over c! backspace space backspace r>
+   _THEN _;
+_refers CTRL-IN
+
+_: EXPECT   \ ( adr n -- ) store keyboard input at adr with console echo
+   span off over + over   \ a amax cur
+   _BEGIN 2dup u>  \ autoterminate if n chars reached
+   _WHILE ekey ekey>char _IF char-in _ELSE ctrl-in _THEN
+          0x0d = dup _IF space _THEN
+   _UNTIL _THEN 3drop _;
+
+_: ACCEPT  \ ( adr n1 -- n2 ) receive a string of at most n1 chars
+   span off over + over   \ a amax cur
+   _BEGIN ekey ekey>char _IF char-in _ELSE ctrl-in _THEN
+          0x0d =
+   _UNTIL 3drop span @ _;
+
+
+\ ------ Input-Source Handling -----------------------------------------------
+
+_: SET-SOURCE  (source) 2! _;   \ ( adr u -- ) set input source area
+
+_: SOURCE      (source) 2@ _;   \ ( -- adr u ) get input source area
+
+_: SOURCE-ID   (source-id) @ _; \ ( -- id ) get input source identifier
+
+_: SLN  \ ( -- ln# ) get current line counter
+   source-id dup 0> _IF fid>fcb f>lctr @ _EXIT _THEN drop 0 _;
+
+_: TIB  'tib @ _;  \ ( -- adr ) terminal input buffer
+
+_: QUERY   \ ( -- ) keybord input into terminal input buffer
+   (source-id) off blk off tib 80 expect
+   tib span @ dup #tib ! set-source >in off _;
+
+_defer REFILL   \ ( -- flag ) refill input buffer
+
+_:NONAME
+   end? @ _IF false end? off _EXIT _THEN
+   source-id 0> _IF source-id freadln
+       _IF set-source >in off true _ELSE 2drop false _THEN _EXIT _THEN
+   source-id 0< _IF false _EXIT _THEN
+   query true _;
+_refers REFILL  \ extendable for BLOCK files
+
+_: PARSE   \ ( char -- addr len ) scan input stream until char is met
+   >r source >in @ rot over + dup 2swap - r> scan
+   >r over - dup r> 0<> - >in +! _;
+
+_: PARSE-WORD  \ ( char -- addr len ) parse and skip over leading chars
+   >r source >in @ rot over + pluck rot - r@ 1 trim over swap r> scan
+   >r over - rot r> dup 0<> + - >in ! _;
+
+_: 'WORD       \ ( -- adr ) place name to adr for possible "CREATE
+   n-here 12 + _;
+
+_: WORD  \ ( delim-char -- adr ) extract next word from input stream
+   'word swap parse-word dup >r pluck c! over 1+ r@ move
+   bl over 1+ r> + c! _;  \ append a blank
+
+_: ?UPPERCASE \ ( adr u -- adr u ) converts to uppercase if CAPS <> 0
+   caps @ _IF upper _THEN _;
+
+_: GET-WORD  \ ( "name" -- a u )
+   bl word count ?uppercase _;
+
+_: _\    \ ( comment to end of line ) prepended _underscore is ignored
+   noop (source) @ >in ! _; _IMMEDIATE  \ noop will be patched in BLOCK.MF
+
+_: _\S   \ comment to end of input source, prepended _underscore is ignored
+   _\ end? on _; _IMMEDIATE
+
+_: (     \ ( -- ) ignore bracketed comments, refill input source if necessary
+   _begin 41 parse + c@ 41 <> _while refill 0= _until _then _; _immediate
+
+_: .(    \ ( -- ) display bracketed comment in line
+   41 parse type _; _immediate
+
+
+\ ------ Wordlist Searching --------------------------------------------------
+
+_: ?THROW  \ ( code flag -- ) throw errorcode if flag true
+   swap _IF throw _THEN drop _;
+
+_: LINK>NAME  12 + _;  \ ( lfa -- nfa )
+
+_: NAME>LINK  12 - _;  \ ( nfa -- lfa )
+
+_alias >BODY  cell+    \ ( cfa -- ) advance from cfa to body (pfa)
+
+_: >LINK      cell- @ ns>cs  _;  \ ( cfa -- cs-lfa )
+
+_: >NAME      >link link>name _; \ ( cfa -- cs-nfa ) go from cfa to nfa
+
+_: >VIEW      >link 8 + _;       \ ( cfa -- cs-vfa )
+
+_: LINK>      cell+ @ _;         \ ( cs-lfa -- cfa )
+
+_: NAME>      8 - @ _;           \ ( cs-nfa -- cfa )
+
+_: VIEW>      cell- @ _;         \ ( cs-vfa -- cfa )
+
+_: LINK>NEXT     \ ( cs-lfa -- cs-lfa-nextheader )
+   link>name count 0x1f and + char+ aligned _;
+
+_: .NAME   \ ( nfa -- ) show the name in the header's nfa
+   count 0x1f and dup _if type _exit _then
+   drop 9 - @ _" XT type 0 u.r _;
+
+_: ?NAME   \ ( xt -- ) show the name of the word with cfa = xt
+   dup 256 u< _if here xt>prim not -13 ?throw here count type _exit _then
+   >name .name _;
+
+_code SEARCH-NAMES  _searchnames  \ ( adr -- 0 | lfa )
+                                  \ find the word whose code includes adr
+
+_code SEARCH-THREAD _searchthread \ ( adr u thread -- 0 | lfa pred-lfa )
+                                  \ search word in single thread
+
+_const #VOCS 8  \ number of wordlists in context array
+
+_: HASH  \ ( adr u voc-ptr -- thread ) get thread in wordlist
+   >r 11 * swap c@ 5 * + r@ @ mod 1+ cells r> + _;  \ simple enough
+
+_: SEARCH-WORDLIST  \ ( adr u wid -- 0 | cfa 1|-1 ) search word in wordlist
+   >r 2dup r> hash search-thread dup
+   _IF over found 2! dup link> swap link>name c@ 0x40 and
+       _IF 1 _ELSE -1 _THEN
+   _THEN _;
+
+_: "FIND \ ( adr u -- 0 | cfa 1|-1 ) search word in wordlist
+   temp-wordlist cell+ @
+   _IF 2dup temp-wordlist search-wordlist
+       dup _IF 2swap 2drop _EXIT _THEN drop
+   _THEN
+   context #vocs cells over + >r  \ adr u ctx |r cend
+   _BEGIN dup @ over r@ u< and
+   _WHILE 3dup @ search-wordlist
+          dup _IF 2>r 3drop 2r> r> drop _EXIT _THEN
+          drop cell+
+   _REPEAT 3drop r> drop 0 _;
+
+_: FIND  \ ( sadr -- sadr 0 | cfa 1 | cfa -1 ) find word in context wordlists
+   dup count "find dup _IF rot drop _THEN _;
+
+
+\ ------ Execution Control ---------------------------------------------------
+
+_code  EXECUTE  _execute      \ ( cfa -- ) execute word as per cfa / xt
+
+\ _:     PERFORM  @ execute _;  \ ( addr-of-cfa -- ) execute cfa / xt at addr
+
+
+\ ------ Interpreting / Compiling Loop ---------------------------------------
+
+_: C,   here 1 dp +! c! _;    \ ( c -- ) compile a char into codespace
+
+_: ,    here 4 dp +! ! _;     \ ( n -- ) compile a cell into codespace
+
+_: ,-N  n-here 4 dp-n +! ! _; \ ( n -- ) compile a cell into namespace
+
+_ALIAS COMPILE, ,             \ ( cfa -- ) compile an execution token
+
+_: LITERAL  \ ( n -- ) compile n as inline literal number
+   _' [lit] compile, , _; _immediate _compile-only
+
+_: ADDRESS  \ ( a -- ) compile a as inline address
+   _' [tick] compile, compile, _; _immediate _compile-only
+
+_: [    state off _; \ ( -- ) set interpretation state
+        _immediate _compile-only
+
+_: ]    state on  _; \ ( -- ) set compilation state
+
+_defer (INTERPRET)  \ extend interpret e.g. for floating-point numbers
+_:NONAME -13 throw _;
+_refers (interpret)
+
+_: INTERPRET   \ ( -- ) main interpreting/compiling loop
+   _BEGIN get-word dup
+   _WHILE 2dup "find   \ a u 0 | a u cfa i
+          dup _IF rot drop rot drop state @ xor
+                  _IF  found @ link>name c@ 0x20 and
+                       state @ 0= and -14 ?throw execute
+                  _ELSE compile, _THEN
+              _ELSE drop 2dup 2>r >double
+                    _IF dpl @ -1 xor
+                        _IF        state @ _IF swap literal literal _THEN
+                        _ELSE drop state @ _IF literal  _THEN _THEN 2r> 2drop
+                    _ELSE (interpret) _THEN _THEN
+   _REPEAT 2drop _;
+
+
+\ ------ Outer User Dialog ---------------------------------------------------
+
+_defer STATUS   _refers NOOP  \ ( -- ) display some status info
+
+_defer READY    _refers NOOP  \ ( -- ) prepare system before interpret
+
+_: PROMPT \ ( -- ) display some result info after command line execution
+   _" _ok type _;
+
+_: QUIT  \ ( -- ) main user dialog loop
+   [ _BEGIN 0 rp! status query ready interpret
+            state @ not _IF prompt _THEN cr
+     _AGAIN _;
+
+
+\ ------ Exception Handling ---------------------------------------------------
+
+_: ABORT  \ ( -- ) abort current execution sequence and perform QUIT
+   -1 throw _;
+
+_defer ERRMSG
+_:NONAME \ ( code -- ) display error message text
+   dup _" _?_ type here tc>errmsg
+   _if drop here count type _else _" Unknown_throwcode_ type 0 .r _then
+   _" _in_ type 'word .name _;
+_refers ERRMSG
+
+_:NONAME  \ ( ni xc-code -- nj | ni xc-code ) exception handler
+   ?dup _IF (throw) off
+            handler @ ?dup  \ fall back to last exception frame
+            _IF rp! r> handler ! r> swap >r sp! drop r>
+                _' throw (throw) ! _EXIT _THEN
+            dup -1 = _IF _ELSE
+            dup -2 = _IF 63 emit space here count type _ELSE
+            0 rp! >r empty-stacks r> errmsg _THEN _THEN
+            empty-stacks temp off temp-wordlist cell+ off 'bcb @ tp !
+            _' throw (throw) ! cr quit
+   _THEN _;
+_refers THROW  \ resolve forward reference
+
+_: CATCH  \ ( xt -- exception# | 0 ) push an exception frame onto returnstack
+   depth >r handler @ >r rdepth handler ! execute
+   r> handler ! r> drop 0 _;
+
+
+\ ------ Interpret/Compile Files and Strings ---------------------------------
+
+_: SAVE-INPUT \ ( -- xn..x1 n ) get source specification
+   source >in @ source-id sln blk @ 6 _;
+
+_: RESTORE-INPUT \ ( xn..x1 n -- flag ) restore source specification
+   6 <> over blk @ <> or 3 pick 0> _IF pluck sln <> or _THEN
+   _IF 3drop 3drop false _EXIT _THEN
+   blk ! drop (source-id) ! >in ! set-source true _;
+
+_: SOURCE>R  \ ( -- ) save source specification to returnstack
+   r> source-id >r source 2>r blk @ >r >in @ >r blk off >in off >r _;
+
+_: R>SOURCE  \ ( -- ) restore source specification from returnstack
+   r> r> >in ! r> blk ! 2r> set-source r> (source-id) ! >r _;
+
+_: SRCERRMSG \ ( c -- ) display source with error message
+   source 2dup _BEGIN 0x09 scan dup _WHILE bl pluck c! _REPEAT 2drop
+   cr type cr >in @ dup (source) @ <> +
+   _BEGIN dup 0> _WHILE 0x5e emit 1- _REPEAT drop _;
+
+_: EVALUATE  \ ( adr u -- ) interpret a string at adr u
+   source>r set-source (source-id) on _' interpret catch
+   dup _IF _" _?_Error_in_string type srcerrmsg _THEN
+   r>source throw _;
+
+_: INCLUDE-FILE  \ ( fileid -- ) interpret an opened sequential file
+   source>r (source-id) ! 0 >r
+   _BEGIN refill
+   _WHILE echo @ _IF cr source type _THEN
+          _' interpret catch r> drop dup >r
+   _UNTIL _THEN
+   r@ _IF _" _?_Error_in_file_ type source-id fid>name type
+          _" _line_ type sln . srcerrmsg _THEN
+   source-id fclose r> r>source throw _;
+
+_: INCLUDED  \ ( adr u -- ) open and interpret a file as per name in string
+   fopen include-file _;
+
+
+\ ------ Creating New Words --------------------------------------------------
+
+_: HIDE  \ ( -- ) unlink last definition from last thread
+   last-n @ ns>cs @ last-link @ ! _;
+
+_: REVEAL \ ( -- ) undo HIDE and re-link last definition into thread
+   last-n @ ns>cs link>name c@ _if last-n @ last-link @ ! _then _;
+
+_variable WARNING  \ issue warning when duplicating definitions
+
+_: "HEADER  \ ( xt adr u -- ) create a header with that name
+   unused 0< unused-n 0< or -8 ?throw \ enough space?
+   64 min warning @
+     _IF 2dup "find _IF drop 2dup type _" _isn't_unique_ type  _THEN _THEN
+   tuck 2dup n-here link>name         \ xt u a u a u nfa
+   dup >r splace dup 0x80 or r@ c!    \ xt u a u , set highest bit in count
+   r> over _begin dup                 \ clear highest bit in name
+           _while 1- swap char+ dup c@ 0x7f and over c! swap
+           _repeat 2drop
+   current @ hash dp-n @              \ xt u thrd lfa
+   dup last-n ! over last-link !      \ remember addresses
+   swap dup @ ,-n !                   \ compile lfv and link into thread
+   swap ,-n                           \ compile xt/cfa
+   blk @ _if blk @ 4 lshift >in @ 64 / +  0x8000 or
+         _else sln 0x7fff and _then
+   16 lshift ,-n                      \ compile view-field
+   dp-n @ + 2+ aligned dp-n !
+   temp @  \ temporary headers e.g. for locals ?
+   _if hide
+    last-n @ dp-n @ over -    \ last-n u
+    dup negate tp +!          \ last-n u
+    over ns>cs tp @ rot move  \ last-n
+    dp-n ! tp @ temp-wordlist cell+ @ over ! cs>ns dup temp-wordlist cell+ !
+    temp-wordlist cell+ last-link ! last-n !
+   _then _;
+
+_: "CREATE  \ ( adr u -- ) create a header with the given name
+   align here cell+ dup 2swap "header last !
+   last-n @ 8 over ns>cs over + +! , _' [var] compile, _;
+
+_: CREATE   \ ( 'name' -- ) create a header from the next input source word
+   get-word "create _;
+
+_: !CSP depth 1+ negate _; \ ( -- -d ) remember stack depth acc. to ANS on CFS
+
+_: ?CSP
+   depth negate xor -22 ?throw _; \ ( d -- ) check stack depth
+
+_: :    \ begin a colon definition
+   !csp create _' [nest] last @ ! hide ] _;
+
+_defer   ;    _immediate _compile-only \ finish a colon definition
+_:NONAME ?csp _' [unnest] compile, reveal
+         last @ here over cell+ - swap >view +!
+         [ align _;
+_refers  ;
+
+_defer   EXIT _immediate _compile-only \ exit a word
+_:NONAME _' [unnest] compile, _;
+_refers  EXIT
+
+_: (DOES)     \ ( -- ) provide runtime semantics for a currently CREATEd word
+   r> last @ ! _;
+
+_defer DOES> _immediate _compile-only
+_:NONAME  \ ( -d -- -d )
+   ?csp !csp _' (does) compile, _;
+_refers DOES>
+
+_: (IMMEDIATE)  \ ( mask -- ) set header bits
+   last-n @ ns>cs link>name tuck c@ or swap c! _;
+
+_: IMMEDIATE     \ ( -- ) make last word immediate
+   0x40 (immediate) _;
+
+_: COMPILE-ONLY  \ ( -- ) mark last word as compile-only
+   0x20 (immediate) _;
+
+
+\ ---- Ticks -----------------------------------------------------------------
+
+_: '     \ ( 'name' -- cfa ) return the cfa of the word 'name'
+   get-word "find 0= -13 ?throw _;
+
+_: '-N   \ ( 'name' -- lfa ) return the header address of the word 'name'
+   ' drop found @ _;
+
+_: [']   \ ( 'name' -- ) compile next word's cfa as literal
+   ' address _; _immediate _compile-only
+
+
+\ ---- Postpone --------------------------------------------------------------
+
+_: [COMPILE]  \ ( 'word' -- ) compile the cfa of the following immediate word
+   ' compile, _; _immediate _compile-only
+
+_: (POSTPONE) \ ( xt -- ) runtime for a postponed immediate word
+   state @ >r state on execute r> state @ and state ! _;
+
+_: POSTPONE   \ append compilation semantics of next word to current definition
+   get-word "find dup 0= -13 ?throw
+   swap _' [tick] compile, compile, 0<
+   _IF _' compile, _ELSE _' (postpone) _THEN compile, _;
+   _immediate _compile-only
+
+
+\ ------ Private Words ------------------------------------------------------
+
+_: BEGIN-PRIVATE  \ ( -- ) if temp-flag is set new headers are temporary
+   temp on _;
+
+_: END-PRIVATE    \ ( -- ) new headers are in normal compilation wordlist
+   temp off _;
+
+_: MAKE-PRIVATE   \ ( -- ) make all temporary headers hidden nonames
+   tp @ _BEGIN dup 'bcb @ u<
+        _while dup link>next swap dp-n @ over cell+ @ cell- !
+               0 ,-n cell+ dup @ ,-n cell+ @ ,-n 0x80 ,-n
+        _repeat drop
+   temp-wordlist cell+ off 'bcb @ tp ! _;
+
+
+\ ------ Defining Words ------------------------------------------------------
+
+_: CONSTANT  \ ( n 'name' -- ) create a constant from n
+   create , _' [const] last @ !  _;
+
+_: VALUE  \ ( n 'name' -- ) create a value from n
+   create , _' [value] last @ !  _;
+
+_: VARIABLE  \ ( 'name' -- ) create a variable, initialized with zero
+   create 0 ,  _;
+
+_: (TO)  \ ( x refxt -- )
+   ' tuck @ <> -32 ?throw cell+
+   state @ _IF literal _' ! compile, _ELSE ! _THEN _;
+
+_: TO     \ ( n 'name' -- ) store n in VALUE
+   _' [value] (TO) _; _immediate
+
+_: +TO    \ ( x 'name' -- ) add x to VALUE
+   ' dup @ _' [value] <> -32 ?throw cell+
+   state @ _IF literal _' +! compile, _ELSE +! _THEN _; _immediate
+
+_: ADJUST-FENCE  \ ( xt -- xt ) increase FENCE to safe limits when using vectors
+   fence @ over u< _IF dup cell+ fence ! _THEN _;
+
+_: DEFER  \ ( 'name' -- ) create an unreferred execution vector
+   variable _' [vect] last @ ! _;
+
+_: DEFERED  \ ( 'name' -- xt ) get/compile referred xt of an execution vector
+   ' dup @ _' [vect] <> -32 ?throw
+   cell+ @ state @ _IF adjust-fence compile, _THEN _; _immediate
+
+_: :NONAME  \ ( -- xt ) make a hilevel word with nameless header
+   0 dup "create _' [nest] last @ tuck ! hide !csp ] _;
+
+_: IS    \ ( xt 'name' -- ) store xt in execution vector
+   adjust-fence _' [vect] (TO) _; _immediate
+
+_: ALIAS   \ ( xt 'name' -- ) create another header for an existing word
+   get-word "header _;
+
+_: PRIMITIVE  \ ( -- ) make a hilevel Forth word that calls a C primitive
+   get-word prim>xt not -13 ?throw alias _;
+
+
+\ ------ Program Flow Control ------------------------------------------------
+
+_: RECURSE   \ ( -- ) call the current definition, thus recursing from begin
+   last @ compile, _; _immediate _compile-only
+
+_: >MARK     \ (C -- adr ) mark a forward jump
+   here 0 , _;
+
+_: >RESOLVE  \ (C adr -- ) resolve a forward jump
+   here swap ! _;
+
+_alias <MARK    here  \ (C -- adr ) remember backward target
+
+_alias <RESOLVE ,     \ (C adr -- ) resolve a backward jump
+
+_: IF        \ (flag -- |C -- adr ) jump forward if flag = 0
+   _' [zbranch] compile, >mark _; _immediate _compile-only
+
+_: ELSE      \ (C a1 -- a2) jump forward and resolve preceding forward jump
+   _' [branch] compile, >mark swap >resolve _; _immediate _compile-only
+
+_alias THEN >resolve  \ (C adr -- ) resolve a forward jump
+   _immediate _compile-only
+
+_alias BEGIN here     \ (C -- adr ) remember backward target
+   _immediate _compile-only
+
+_: AGAIN     \ (C adr -- ) unconditional backward jump
+   _' [branch] compile, <resolve _; _immediate _compile-only
+
+_: WHILE     \ ( flag -- |C a1 -- a2 a1 ) jump forward if flag = 0
+   if swap _; _immediate _compile-only
+
+_: REPEAT    \ (C a2 a1 -- ) jump backwards and resolve prec. forward jump
+   again then _; _immediate _compile-only
+
+_: UNTIL     \ ( flag -- |C adr -- ) jump backwards if flag = 0
+   _' [zbranch] compile, <resolve _; _immediate _compile-only
+
+_const CASE 0  \ ( -- 0 ) initialize OF-counter
+   _immediate _compile-only
+
+_: OF        \ ( x1 x2 -- | x1 ) enter OF-part if x1=x2, increment OF-counter
+   _' over compile, _' = compile, if _' drop compile, swap 1+ _;
+   _immediate _compile-only
+
+_: ENDOF     \ ( -- ) jump forward to just after ENDCASE
+   >r else r> _; _immediate _compile-only
+
+_: ENDCASE   \ ( x -- ) discard test value and resolve forward jumps by ENDOFs
+   _' drop compile, _BEGIN dup _WHILE swap >resolve 1- _REPEAT drop _;
+   _immediate _compile-only
+
+
+\ ------ Conditional Compilation ---------------------------------------------
+
+_: [DEFINED]  \ ( 'word' -- flag ) test if word exists
+   get-word "find _if drop true _else false _then _; _immediate
+
+_alias [THEN] noop _immediate  \ ( -- ) target label for [if] and [else]
+
+_: [ELSE]  \ ( -- ) continue interpreting at next conditional
+   1 _BEGIN _BEGIN get-word dup _WHILE  \ level adr len
+             2dup _" [IF]   compare 0= _IF 2drop 1+ _ELSE
+             2dup _" [ELSE] compare 0= _IF 2drop 1- dup _IF 1+ _THEN _ELSE
+                  _" [THEN] compare 0= _IF 1- _THEN _THEN _THEN
+                  ?dup 0= _IF _EXIT _THEN
+            _REPEAT 2drop refill 0=
+     _UNTIL drop _; _immediate
+
+_: [IF]  \ ( flag -- ) if flag = 0 continue interpreting at next conditional
+   0= _if [else] _then _; _immediate
+
+
+\ ------ Looping ------------------------------------------------------------
+
+_: (DO)     \ ( lim st -- 0 | i lim here ) set up loop parameters on ret.stack
+   swap -2147483648 + dup >r - >r 2 rpick >r 0 _;
+
+_: (?DO)    \ ( lim st -- flag | i lim here ) like (DO) but flag set if st=lim
+   2dup swap -2147483648 + dup >r - >r 2 rpick >r = _;
+
+_: LEAVE    \ ( -- ) leave the do-loop immediately
+   2r> 2drop -2147483648 >r 2 rpick >r -1 _; _compile-only
+
+_: UNLOOP    \ (R i lim here -- ) discard loop parameters
+   r> 2r> r> 3drop >r _; _compile-only
+
+_: I  \ ( -- i ) get inner loop index
+   1 rpick 2 rpick + _; _compile-only
+
+_: J  \ ( -- j ) get outer index of two nested loops
+   4 rpick 5 rpick + _; _compile-only
+
+_: K  \ ( -- k ) get outer index of three nested loops
+   7 rpick 8 rpick + _; _compile-only
+
+_: BOUNDS    \ ( start num -- limit start ) convert range to loop parameters
+   over + swap _;
+
+_: DO        \ ( limit start -- ) set up a do-loop which will terminate if
+             \                    the index crosses between limit and limit-1
+   _' (do) compile, <mark _' [vbranch] compile, >mark swap _;
+   _immediate _compile-only
+
+_: ?DO       \ ( limit start -- ) set up a do-loop which will not be entered
+             \                    if start = limit
+   _' (?do) compile, <mark _' [vbranch] compile, >mark swap _;
+   _immediate _compile-only
+
+_: +LOOP     \ ( incr -- ) add incr to the loop index and loop again
+   repeat _' unloop compile, _; _immediate _compile-only
+
+_: LOOP      \ ( -- ) inkrement the loop index by 1 and loop again
+   1 literal +loop _; _immediate _compile-only
+
+
+\ ------ Strings -------------------------------------------------------------
+
+_const B/IB   256  \ bytes per tib and sib
+_variable SBUF     \ last used string buffer
+
+_: S>BUF     \ ( adr u -- ) place a string into the next string buffer
+   'sib @ dup sbuf @ = _IF b/ib + _THEN dup sbuf ! splace _;
+
+_: CHAR      \ ( -- c ) parse the input stream and get the first character
+   bl word char+ c@ _;
+
+_: [CHAR]    \ compile the following character as inline literal
+   char literal _; _immediate _compile-only
+
+_: [HEX]     \ compile the following word as inline hex number
+   base @ >r hex get-word >double not -24 ?throw
+   drop literal r> base ! _; _immediate _compile-only
+
+_: SLITERAL  \ ( adr u -- ) compile an inline literal string
+   _' [slit] compile, tuck here splace 2+ aligned allot _; _immediate _compile-only
+
+_: S"        \ ( string" - adr u ) make the input stream until " a string
+   0x22 parse state @
+   _IF sliteral _ELSE s>buf sbuf @ count _THEN _; _immediate
+
+_: C"        \ ( string" - sadr ) like s" but provide a counted string
+   0x22 parse state @
+   _IF sliteral _' drop compile, _' 1- compile, _ELSE s>buf sbuf @ _THEN _;
+   _immediate
+
+_: ."        \ ( string" -- ) compile string for display
+   0x22 parse state @
+   _IF sliteral _' type compile, _ELSE type _THEN _; _immediate
+
+_: (ABORT")  \ ( flag adr u -- ) abort with message if flag <> 0
+   rot _IF here place -2 throw _THEN 2drop _;
+
+_: ABORT"    \ ( string" -- ) compile abort with message as of parsed string
+   s" _' (abort") compile, _; _immediate _compile-only
+
+
+\ ------ MARKER --------------------------------------------------------------
+
+_: TRIM-THREADS  \ ( amax -- ) trim threads of all wordlists to below amax
+   dup link> voc-link @  \ trim vocabulary chain
+   _BEGIN 2dup u< _WHILE dup @ 1+ cells + @ _REPEAT
+   voc-link ! drop 1- voc-link @  \ amax' vocadr
+   _BEGIN dup dup @  \ amax' vocadr vocadr n
+         _BEGIN dup
+         _WHILE 1- >r cell+  \ amax' vocadr thradr(i) | i
+                dup @ _BEGIN 3 pick over ns>cs u<
+                      _WHILE ns>cs @ _REPEAT
+                over ! r>
+         _REPEAT 2drop
+         dup @ 1+ cells + @ dup 0= \ more vocs?
+   _UNTIL 2drop _;
+
+_: MARKER     \ ( 'name' -- ) create a word which will forget all later words
+   here dp-n @ last @ last-n @ file-link @
+   create context here #vocs cells dup allot move current @ , , , , , ,
+   (does) dup #vocs 5 + cells + @ fence @ u<
+   _IF _" MARKER-word_below_FENCE (abort") _THEN
+   #vocs cells over context pluck move + dup @ current !
+   cell+ dup @ file-link ! cell+ dup @ last-n ! cell+ dup @ last !
+   cell+ dup @ dp-n ! cell+ @ dp !
+   n-here trim-threads _;
+
+
+\ ------ System Startup & Finish ---------------------------------------------
+
+_defer INITIALISE  \ ( -- ) initialise hardware etc. before starting MinForth
+_refers NOOP
+
+_:NONAME  \ ( -- ) initialize the system before starting MinForth
+   \ set up buffer regions below heap:
+   heap @ dup hp ! b/ib - dup 'tib !           \ 1 terminal input buffer
+   b/ib 2* - dup 'sib ! dup sbuf !             \ 2 string input buffers
+   8 b/fcb * - dup 'fcb ! dup 'bcb ! dup tp !  \ 8 file control buffers
+   heap @ over - erase
+   \ initialize system variables:
+   (throw) off (debug) off handler off
+   temp off caps on echo off warning on signed off decimal _;
+_refers (BOOT)
+
+_:NONAME  \ ( -- ) clean-up the system before returning to the OS
+   fclose-all _;
+_refers (BYE)
+
+_defer (COLD) \ ( -- ) remember initial dictionary condition
+_refers NOOP
+
+_defer GREETINGS  \ ( -- ) display a startup message
+_refers NOOP
+
+_:NONAME   \ ( -- ) entry point into the MinForth system after _INIT
+   here count tib splace tib count evaluate  \ execute commandline commands
+   (cold) greetings abort _;
+_refers (MAIN)
+
+_: BYE   \ ( -- ) leave MinForth
+   (bye) -1 execute _;
+
+
+\ ------ Debugging Words -----------------------------------------------------
+
+_: DEBUG   \ ( 'name' -- ) prepare lolevel debugger to start at word NAME
+   ' dup @ _' [vect] = _if cell+ @ _then
+   (debug) ! trace _;
+
+_: UNBUG (debug) off _;
+
+
+\ ------ Environment Queries ----------------------------------------------
+
+_: ?ENV  \ ( adr u a' u' x -- )
+   (env) ! 2over compare 0= throw  _;
+
+_defer ENV?
+_:noname
+   _" CORE                true       ?env
+   _" CORE-EXT            true       ?env
+   _" /COUNTED-STRING     256        ?env
+   _" HOLD                66         ?env
+   _" /PAD                256        ?env
+   _" ADDRESS-UNIT-BITS   8          ?env
+   _" FLOORED             false      ?env
+   _" STACK-CELLS         spmax @    ?env
+   _" RETURN-STACK-CELLS  rpmax @    ?env
+   _" MAX-CHAR            0xff       ?env
+   _" MAX-U               -1         ?env
+   _" MAX-N               2147483647 ?env
+   _" EXCEPTION           true       ?env
+   _" EXCEPTION-EXT       true       ?env
+   _" FILE                true       ?env
+   _" FILE-EXT            true       ?env _;
+_refers ENV?
+
+_defer ENVIRONMENT?  \ ( adr u -- false | x true ) answer environmental query
+_:noname
+   upper _' env? catch _if 2drop (env) @ true _exit _then
+   2dup _" MAX-UD compare 0= _if 2drop -1 dup true _exit _then
+   2dup _" MAX-D  compare 0= _if 2drop -1 2147483647 true _exit _then
+   2drop false _;
+_refers ENVIRONMENT?
+
+
+\ ------ Saving an Image -----------------------------------------------------
+
+_: SAVE-IMAGE  \ ( a u --  ) save the system in a named image file
+   fcreate
+   here -386616131 over !        \ magic number
+   cell+ here      over !        \ codespace size
+   cell+ dp-n @    swap !        \ namespace size
+   here 3 cells pluck fwrite
+   0 here pluck fwrite
+   names @ dp-n @ pluck fwrite
+   fclose _;
+
+
+\ ------ FLOAD & REQUIRES -------------------------------------------------
+
+_: IS-FILE?  \ ( a u -- flag ) test if a named file had been loaded before
+   file-link @     \ a u pfa
+   _BEGIN dup >r cell- >name count 31 and  \ a u a' u' | pfa
+          2over compare 0=   \ a u flag | pfa
+           _IF r> 3drop true _EXIT _THEN
+          r> cell+ @ dup 0=
+   _UNTIL 3drop false _;
+
+_: APPEND-MF \ ( adr u -- adr u' ) append .mf extension if not there
+   2dup 46 scan _if drop _exit _then
+   _" .mf_ rot swap move 3 + _;
+
+_: MAKE-VIEWFILE  \ ( first-here fid -- ) create an entry for VIEW
+   fid>fcb f>name count "create
+   here swap , file-link @ , file-link ! hide _;
+
+_: "FLOAD   \ ( a u -- ) interpret file and create an entry for VIEW
+   here >r append-mf fopen dup >r include-file 2r> make-viewfile _;
+
+_: FLOAD    \ ( 'name' -- ) interpret file and create an entry for VIEW
+   bl word count "fload _;
+
+_defer INCLUDE \ ( 'name' -- ) interpret file and create an entry for VIEW
+_refers FLOAD
+
+_: REQUIRES  \ ( 'name' -- ) interpret file if not yet loaded
+   >in @ bl word count append-mf  \ a u
+   is-file? _IF drop _EXIT _THEN
+   >in ! fload _;
+
+
+\s ===========================================================================
+
+\ to support debugging the kernel, change above \S to \
+
+_: DUMP  \ ( adr u -- ) memory range hex dump
+   base @ -rot hex over + over -16 and  \ b adrlo adrhi adr
+   cr _" Address:___ type
+   0 _begin dup 16 u< _while dup u. space 1+ _repeat drop
+   0 _begin dup 16 u< _while dup 1 u.r 1+ _repeat drop
+   _begin 2dup u>
+   _while cr dup 8 u.r space space dup >r
+         16 _begin swap 2over pluck -rot within
+                  _if dup c@ 0 <# # # #>
+                  _else _" .. _then type space
+                  1+ swap 1- dup 0=
+            _until 2drop space r>
+         16 _begin swap 2over pluck -rot within
+                  _if dup c@ dup bl 128 within not _if drop 46 _then emit
+                  _else space _then
+                  1+ swap 1- dup 0=
+            _until drop
+   _repeat 3drop base ! _;
+
+_: .S   \ ( -- ) print datastack
+   depth _BEGIN dup 0> _WHILE dup pick . 1- _REPEAT drop _;
+
+_: .RS  \ ( -- ) print returnstack
+   rdepth _BEGIN 1- dup 0> _WHILE dup rpick u. _REPEAT drop _;
+
+
+\S ===========================================================================
+

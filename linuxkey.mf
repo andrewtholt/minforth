@@ -1,0 +1,117 @@
+( ============================================================================
+  LINUXKEY.MF - Linux keyboard code translation for MinForth
+  ============================================================================
+
+  Linux terminal keyboard events become translated into the corresponding DOS
+  keycodes.
+
+  required by facility.mf
+)
+
+\  Copyright (C) 2002  Andreas Kochenburger (kochenburger@gmx.de)
+\
+\  This program is free software; you can redistribute it and/or modify
+\  it under the terms of the GNU General Public License as published by
+\  the Free Software Foundation; either version 2 of the License, or
+\  (at your option) any later version.
+\
+\  This program is distributed in the hope that it will be useful,
+\  but WITHOUT ANY WARRANTY; without even the implied warranty of
+\  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+\  GNU General Public License for more details.
+\
+\  You should have received a copy of the GNU General Public License
+\  along with this program; if not, write to the Free Software
+\  Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
+
+
+BEGIN-PRIVATE
+
+: KC:  \ enter item in kcodes table
+  get-word >double not -24 ?throw drop dup 0= if drop exit then ,
+  bl word count tuck here splace 2 + aligned allot ;
+
+CREATE KCODES  \ as per linux (tested with SuSE 6.3 only)
+kc: 331 D    \ left
+kc: 328 A    \ up
+kc: 333 C    \ right
+kc: 336 B    \ down
+kc: 338 2~   \ ins
+kc: 339 3~   \ del
+kc: 327 1~   \ home
+kc: 335 4~   \ end
+kc: 329 5~   \ pgup
+kc: 337 6~   \ pgdn
+kc: 315 [A   \ F1
+kc: 316 [B   \ F2
+kc: 317 [C   \ F3
+kc: 318 [D   \ F4
+kc: 319 [E   \ F5
+kc: 320 17~  \ F6
+kc: 321 18~  \ F7
+kc: 322 19~  \ F8
+kc: 323 20~  \ F9
+kc: 324 21~  \ F10
+kc: 389 23~  \ F11
+kc: 390 24~  \ F12
+kc: 340 25~  \ Sh-F1
+kc: 341 26~  \ Sh-F2
+kc: 342 28~  \ Sh-F3
+kc: 343 29~  \ Sh-F4
+kc: 344 31~  \ Sh-F5
+kc: 345 32~  \ Sh-F6
+kc: 346 33~  \ Sh-F7
+kc: 347 34~  \ Sh-F8
+kc: 0
+
+CREATE KQUEUE \ raw keys are queued up as counted string
+3 CELLS ALLOT KQUEUE 3 CELLS ERASE
+
+0 VALUE KC  \ holds address after successful kc-scan
+
+: KC-SCAN  \ ( -- flag ) scan for extended key codes
+  kqueue 1+ @ [hex] FFFF and [hex] 5b1b <> if false exit then
+  kqueue 3 + kcodes
+  begin  dup @
+  while  dup cell+ count 3 pick over compare 0=
+	 if to kc drop true exit then
+	 cell+ dup c@ + 2 + aligned
+  repeat 2drop false ;
+
+: REFILL-KQUEUE  \ ( -- ) refill queue as much as possible
+  begin kqueue c@ 10 = if exit then
+	rawkey?
+  while rawkey kqueue dup c@ 1+ dup pluck c! + c!
+  repeat ;
+
+: FETCH-RAWKEY	\ ( -- rawkey ) fetch first queue char
+  kqueue c@ dup
+  if 1- kqueue c! kqueue 1+ dup c@ swap dup 1+ swap 10 move
+  then ;
+
+: FETCH-KCKEY  \ ( -- cookedkey ) fetch control key and empty raw queue chars
+  kc cell+ c@ 2 +  \ len
+  kqueue c@ over - kqueue c!
+  kqueue 1+ dup pluck + swap 10 3 pick - move
+  kqueue 12 + over - swap erase
+  kc @ ;
+
+: GET-EKEY
+  kc-scan if fetch-kckey else fetch-rawkey then ;
+
+END-PRIVATE 
+
+\ ------ Extending EKEY of the kernel ----------------------------------------
+
+:NONAME  \ ( -- flag )
+  kqueue c@ if true exit then
+  refill-kqueue
+  kqueue c@ 0<> ;
+IS EKEY?
+
+:NONAME  \ ( -- key )
+  begin ekey? until get-ekey ;
+IS EKEY
+
+MAKE-PRIVATE
+

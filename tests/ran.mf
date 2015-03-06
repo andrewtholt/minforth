@@ -1,0 +1,167 @@
+\  --Ran-Next--                              \  Wil Baden  1970-01-02
+
+\  *********************************************************************
+\  *                                                                   *
+\  *  D E Knuth  2002-11-10                                            *
+\  *                                                                   *
+\  *     RAN-NEXT  ( -- urandom )                                      *
+\  *                                                                   *
+\  *  Knuth's recommended random number generator from TAOCP,          *
+\  *  updated 2002.                                                    *
+\  *                                                                   *
+\  *  Transformed to pure Core Forth by Wil Baden.                     *
+\  *                                                                   *
+\  *  This generator is good for billions of numbers, unlike a         *
+\  *  single or double linear congruential sequence in 32-bIt          *
+\  *  arithmetic (good for a few million numbers), or a single         *
+\  *  linear congruential sequence in 16-bit arithmetic, such as       *
+\  *  from _Starting Forth_ (good for about five dozen numbers).       *
+\  *                                                                   *
+\  *  This is not as fast as a single LCS, but much faster than a      *
+\  *  double LCS.                                                      *
+\  *                                                                   *
+\  *  Needs two's complement arithmetic.                               *
+\  *                                                                   *
+\  *********************************************************************
+
+100 CONSTANT  KK           \  the long lag
+37  CONSTANT  LL           \  the short lag
+1 30 LSHIFT CONSTANT  MM   \  the modulus
+
+\  Mod-Diff       ( n1 n2 -- n3 )
+\     subtraction mod MM
+\     [Knuth defines this as a macro.]
+
+: Mod-Diff  S" - MM 1- AND " EVALUATE ; IMMEDIATE
+
+    : TH  S" CELLS + " EVALUATE ; IMMEDIATE
+    : @REL  @ ;
+    : !REL  ! ;
+
+CREATE Ran-X  KK CELLS ALLOT  \  the generator state
+
+\  ***************************  Ran-Array  ***************************
+
+\  Ran-Array   ( aa n -- )
+\     put n new random numbers in aa
+\     aa   destination
+\     n    array length (must be at least KK)
+
+: Ran-Array                ( aa n -- )
+    KK 0 DO
+        over  Ran-X I TH @
+            SWAP I TH !
+    LOOP
+    dup KK ?DO
+        over  dup I KK - TH @   over I LL - TH @  Mod-Diff
+            SWAP I TH !
+    LOOP                     ( aa j)
+    LL 0 DO
+        2dup  ll - TH @  >r  2dup  kk - TH @  r> Mod-Diff
+            Ran-X i TH !
+        1+
+    LOOP
+    KK LL ?DO
+        2dup KK - TH @  Ran-X I LL - TH @  Mod-Diff
+            Ran-X I TH !
+        1+
+    LOOP
+    2DROP ;
+
+\  the following routines are from exercise 3.6--15
+\  after calling ran_start, get new randoms by, e.g., "x=ran_arr_next()"
+
+1009 CONSTANT  QUALITY  \  recommended quality level for high-res use
+CREATE  Ran-Arr-Buf   QUALITY CELLS ALLOT
+CREATE  Ran-Arr-Dummy  -1 ,
+CREATE  Ran-Arr-Started  -1 ,
+
+\  the next random number, or -1
+CREATE  Ran-Arr-PTR  0 ,  Ran-Arr-Dummy Ran-Arr-PTR !REL
+
+\  guaranteed separation between streams
+70 CONSTANT  TT
+
+\  ***************************  Ran-Start  ***************************
+
+\   Ran-Start               ( seed -- )
+\     do this before using ran_array
+\     seed  selector for different streams
+
+KK 2* 1- CELLS CREATE  X  ALLOT  \  the preparation buffer
+
+: Ran-Start                ( seed -- )
+    dup  2 +  MM 2 -  AND    ( seed ss)
+    KK 0 DO
+        dup  X I TH !             \  bootstrap the buffer
+        1 LSHIFT  dup MM < NOT    \  cyclic shift 29 bits
+            IF  MM 2 -  -  THEN
+    LOOP  DROP               ( seed)
+    1 X CELL+ +!                  \  make x[1] (and only x[1]) odd
+    TT 1-  over MM 1- AND    ( seed t ss)
+    BEGIN  over WHILE
+        1 KK 1- DO                \  "square"
+            X I TH @  X I 2* TH !
+            0 X I 2* 1- TH !
+        -1 +LOOP
+        KK  KK 2* 2 -  DO
+            X  I KK LL -  -  TH @  X I TH @  Mod-Diff
+                X  I KK LL - - TH !
+            X  I KK - TH @  X I TH @  Mod-Diff
+                X I KK - TH !
+        -1 +LOOP
+       dup 1 AND IF              \  "multiply by z"
+           1 KK DO  X I 1- TH @  X I TH !  -1 +LOOP
+           X KK TH @  X !        \  shift the buffer cyclically
+           X LL TH @  X KK TH @  Mod-Diff  X LL TH !
+       THEN
+       dup IF  1 RSHIFT  ELSE  DROP 1-  0  THEN
+    REPEAT  2DROP DROP
+    LL 0 DO  X I TH @  Ran-X  I KK + LL - TH !  LOOP
+    KK LL DO  X I TH @  Ran-X I LL - TH  !  LOOP
+    10 0 DO  X KK 2* 1- Ran-Array  LOOP  \  warm things up
+    Ran-Arr-Started  Ran-Arr-PTR  !REL ;
+
+\  *************************  Ran-Arr-Cycle  *************************
+
+\  Ran-Arr-Cycle           ( -- urandom )
+
+: Ran-Arr-Cycle            ( -- urandom )
+    Ran-Arr-PTR @REL Ran-Arr-Dummy =  \  the user forgot to initialize
+        IF  314159 Ran-Start  THEN
+    Ran-Arr-Buf QUALITY Ran-Array
+    -1 Ran-Arr-Buf 100 TH !REL
+    1 CELLS Ran-Arr-PTR +!
+    Ran-Arr-Buf @ ;
+
+\  ***************************  Ran-Next  ****************************
+
+\  [Knuth defines this  in C as a macro, but this is not appropriate 
+\  in Forth.]
+
+: Ran-Next                 ( -- urandom )
+    Ran-Arr-PTR @REL 0< IF
+        Ran-Arr-Cycle
+    ELSE
+        Ran-Arr-PTR @REL ( @ ??? )
+        1 CELLS Ran-Arr-PTR +!
+    THEN ;
+
+\  *******************************************************************
+\  *     Optional Test                                               *
+\  *******************************************************************
+
+MARKER ONCE
+
+2009 CELLS CREATE A  ALLOT
+
+: RUN                      ( -- )
+    310952 Ran-Start
+    2009 1+ 0 DO  A 1009 Ran-Array  LOOP
+    CR  A @ .  ." should be 995235265 "
+    310952 Ran-Start
+    1009 1+ 0 DO  A 2009 Ran-Array  LOOP
+    CR  A @ .  ." should be 995235265 "
+    ;
+
+RUN ONCE

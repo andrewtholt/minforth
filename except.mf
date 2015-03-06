@@ -1,0 +1,57 @@
+( ============================================================================
+  EXCEPTION.MF - the EXCEPTION wordset for MinForth
+  ============================================================================
+
+  All the following standard words are defined in the kernel:
+  CATCH THROW ABORT ABORT"
+)
+
+\  Copyright (C) 2002  Andreas Kochenburger (kochenburger@gmx.de)
+\
+\  This program is free software; you can redistribute it and/or modify
+\  it under the terms of the GNU General Public License as published by
+\  the Free Software Foundation; either version 2 of the License, or
+\  (at your option) any later version.
+\
+\  This program is distributed in the hope that it will be useful,
+\  but WITHOUT ANY WARRANTY; without even the implied warranty of
+\  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+\  GNU General Public License for more details.
+\
+\  You should have received a copy of the GNU General Public License
+\  along with this program; if not, write to the Free Software
+\  Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
+    
+BEGIN-PRIVATE
+
+CREATE ERRLOC 5 CELLS ALLOT
+
+:NONAME  \ fill errloc structure for rstack backtrace in WHERE
+  dup -2 <
+  IF errloc 5 cells erase dup errloc ! errloc cell+ 0
+     BEGIN dup 4 <
+     WHILE dup rpick pluck ! 1+ swap cell+ swap dup rdepth =
+     UNTIL THEN 2drop THEN
+  defered THROW ;
+IS THROW
+
+END-PRIVATE
+
+: WHERE  \ ( -- ) display backtrace after last exception
+  cr ." Backtrace for last exception # " errloc @ dup .
+  [char] : emit space here tc>errmsg if here count type then
+  errloc cell+ 4 cells bounds
+  DO i @ dup 0= IF drop LEAVE THEN
+     cr dup u. dup 256 here within
+     IF dup search-names  \ r lfa
+        ."  ->  " dup link>name .name
+        link> over - -4 / 1- ."  + " u. ." cells"
+        cell- @ search-names
+        ?dup IF ."  ->  " link>name .name THEN
+     ELSE drop ." -> data?"
+     THEN
+  4 +LOOP
+;
+
+MAKE-PRIVATE
+

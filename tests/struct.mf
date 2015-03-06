@@ -1,0 +1,190 @@
+0 [IF]
+
+  ============================================================================
+    STRUCT  -  Structured Data Values in MinForth
+  ============================================================================
+
+  A simple static structures package whose instances are compiled into
+  codespace. All the standard Forth data types can be used as structure
+  elements. As a convenience the last used structure instance is remembered
+  in the value %. Late-binding is used by default i.e. effective addresses are
+  calculated when they are used. Data can be stored in structure instance
+  elements by %TO ("struct to"). Complete instances can be copied by TO%
+  ("to struct").
+
+  The following comparison should tell you almost everything.
+
+  Structures in ANSI C               Structures in MinForth
+  --------------------               ----------------------
+  Definition:
+    struct person                      %struct
+    {
+       char  nam[20];                    20 %string .nam
+       int   rank;                          %cell   .rank
+       float grade;                         %float  .grade
+    };                                 %end-struct person
+
+  Usage:
+    struct person tester;              person tester
+    strcpy(tester.nam,"Otto");         s" Otto" tester %to .nam
+    tester.rank = 3;                          3 % %to .rank
+    tester.grade = 1.43;                  1.43E % %to .grade
+    printf("%s",tester.nam);           % .nam type
+    printf(" %d\n",tester.rank);       % .rank . cr
+
+  Data Structures
+  ---------------
+  Structure (class):
+    runtime:    create an instance data structure
+    data cells: size in bytes, link to first element
+  Element:
+    runtime:    check class membership, push data to stack (like a value)
+    data cells: class, offset, type-id, link to next element
+  Instance:
+    runtime:    push class handle (structure pfa) on stack
+    data cells: class, data
+
+[THEN]
+
+\ ----------------------------------------------------------------------------
+
+REQUIRES float
+
+0 VALUE %       \ remember latest class handle
+
+BEGIN-PRIVATE
+
+0 VALUE %SIZE   \ holds growing structure size in bytes
+0 VALUE %ELINK  \ holds cfa of previous element
+
+: %ELADR  \ ( inst-hndl el-hndl -- el-adr ) get address of element in instance
+  2@ pluck @ = if + exit then -32 throw ;
+
+: %S!  \ ( a u el-adr umax -- ) store string in string-element
+  pluck u> if splace exit then -20 throw ;
+
+: %MAKE-ELEMENT  \ ( incr id 'name' -- )
+  create here %elink , to %elink %size , , 0 , +to %size ;
+
+: %MAKE-INSTANCE  \ ( class-hndl 'structname' -- ) create a structure instance
+  create dup , @ cell- allot
+  does> dup to % ;
+
+: %ID  8 + @ ;  \ ( el-hndl -- type-id ) get type id in element
+
+: (TO%)  \ ( source-hndl target-hndl -- ) copy and correct float alignment
+  over @ over @ =
+  if 2dup dup @ @ move  \ copy all data
+     dup @ cell+ @      \ ( sc tg el1 ) realign floats in target
+     begin dup while
+           dup %id -5 = if
+             dup cell+ @ 3 pick over + faligned f@
+             pluck + dup 12 erase faligned f!
+           then 12 + @
+     repeat 3drop
+  exit then -32 throw ;
+
+END-PRIVATE
+
+: %STRUCT  \ ( -- ) begin a structure-class definition
+  %size abort" nested structures not allowed"
+  4 to %size 0 to %elink ;
+
+: %CHAR    \ ( 'name' -- ) define a structure char element
+  4 -1 %make-element does> %eladr c@ ;
+
+: %CELL    \ ( 'name' -- ) define a structure cell element
+  4 -2 %make-element does> %eladr @ ;
+
+: %DOUBLE  \ ( 'name' -- ) define a structure double element
+  8 -3 %make-element does> %eladr 2@ ;
+
+: %SFLOAT  \ ( 'name' -- ) define a structure single fp element
+  4 -4 %make-element does> %eladr sf@ ;
+
+: %FLOAT   \ ( 'name' -- ) define a structure fp element
+  12 -5 %make-element does> %eladr faligned f@ ;
+
+' %FLOAT ALIAS %DFLOAT
+
+: %STRING  \ ( u 'name' ) define a string element for stringsize u
+  1+ dup 1+ aligned swap %make-element does> %eladr count ;
+
+: %END-STRUCT  \ ( 'classname' -- ) create a named structure-class
+  create here %size , 0 to %size 0 to %
+    begin  %elink   \ link and brand all previous elements as class members
+    while  %elink @ %elink over 12 + !
+           over %elink ! %elink to % to %elink
+    repeat % , to %
+  does> %make-instance ;
+
+: %TO  \ ( n inst-hndl 'name' -- ) store n in cell element
+  ' >body dup
+  state @ if
+    [compile] literal postpone %eladr %id
+    case -1 of postpone c!  endof
+         -2 of postpone !   endof
+         -3 of postpone 2!  endof
+         -4 of postpone sf! endof
+         -5 of postpone faligned postpone f! endof
+         [compile] literal postpone %s! exit
+    endcase
+  else
+    >r %eladr r> %id  ( n el-adr id )
+    case -1 of c!  endof
+         -2 of !   endof
+         -3 of 2!  endof
+         -4 of sf! endof
+         -5 of faligned f! endof
+         %s! exit
+    endcase
+  then ; IMMEDIATE
+
+: TO%  \ ( source-hndl 'target' -- ) copy one instance into another instance
+  ' >body
+  state @ if [compile] literal postpone (to%) else (to%) then ; IMMEDIATE
+
+MAKE-PRIVATE
+
+\ ------ Some simple Tests --------------------------------------------------
+
+marker delete-testcode
+
+%struct %cell   .id
+        %cell   .rank
+     12 %string .nam
+        %float  .avg
+%end-struct tester
+
+tester bob tester susie
+
+2           bob  %to .id
+7.4e        %    %to .avg
+s" Susanne" %    %to .nam
+
+: to-susie to% susie ;
+
+bob to-susie
+
+cr ." Susie's name is " susie .nam type
+cr ." Bob's name is not " bob .nam type
+s" Bobbie" % %to .nam
+."  but " % .nam type
+
+%struct %float .re %float .im %end-struct complex
+complex z1 complex z2
+
+1.e z1 %to .re
+2.3e % %to .im  \ set z1 to 1+2.3i
+
+: test  z1 to% z2 ;
+
+: z+  ( z1 z2 -- f: -- im re )
+  over .im dup .im f+ .re .re f+ ;
+
+test z1 z2 z+
+
+cr ." Complex result: " f. char i emit f. ." (2. i4.6)"
+
+delete-testcode
+

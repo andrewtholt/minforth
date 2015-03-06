@@ -1,0 +1,362 @@
+( ============================================================================
+  FLOAT.MF - the FLOATING-POINT wordset for MinForth
+  ============================================================================
+
+  The following standard words are defined in the kernel:
+  FDEPTH FLITERAL
+)
+
+\  Copyright (C) 2002  Andreas Kochenburger (kochenburger@gmx.de)
+\
+\  This program is free software; you can redistribute it and/or modify
+\  it under the terms of the GNU General Public License as published by
+\  the Free Software Foundation; either version 2 of the License, or
+\  (at your option) any later version.
+\
+\  This program is distributed in the hope that it will be useful,
+\  but WITHOUT ANY WARRANTY; without even the implied warranty of
+\  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+\  GNU General Public License for more details.
+\
+\  You should have received a copy of the GNU General Public License
+\  along with this program; if not, write to the Free Software
+\  Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
+    
+\ ------ FP Stack Operations -------------------------------------------------
+
+: FDROP  \ ( f: r -- ) discard top element
+  fdepth 1- fp! ;
+
+PRIMITIVE _fpick FPICK  \ ( i f: rn..r0 -- f: rn ) copy i-th element to top
+
+: FDUP   \ ( f: r -- r r ) duplicate top element
+  0 fpick ;
+
+: FOVER  \ ( f: r1 r2 -- r1 r2 r1 ) copy second element to top
+  1 fpick ;
+
+PRIMITIVE _froll FROLL  \ ( i f: fi..f0 -- f: fi-1..f0 fi ) roll i floats
+
+: FSWAP  \ ( f: r1 r2 -- r2 r1 ) exchange top 2 elements
+  1 froll ;
+
+: FROT   \ ( f: r1 r2 r3 -- r2 r3 r1 ) rotate top 3 elements
+  2 froll ;
+
+
+\ ------ FP Memory Operations ------------------------------------------------
+
+PRIMITIVE _fstore  F!   \ ( adr f: r -- ) store 64 bit float at adr
+
+PRIMITIVE _fat     F@   \ ( adr -- f: r ) read 64 bit float from adr
+
+PRIMITIVE _sfstore SF!  \ ( adr f: r -- ) store 32 bit float at adr
+
+PRIMITIVE _sfat    SF@  \ ( adr -- f: r ) read 32 bit float from adr
+
+' F!  ALIAS DF!  \ ( adr f: r -- ) store 64 bit float at adr
+
+' F@  ALIAS DF@  \ ( adr -- f: r ) read 64 bit float from adr
+
+: FLOATS      3 lshift ; \ ( n -- size ) bytesize of n floatcells
+
+: FLOAT+      8 + ; \ ( adr -- next ) advance to next floatcell
+
+' FLOATS ALIAS DFLOATS  \ ( n -- size ) bytesize of n 64 bit floats
+
+' FLOAT+ ALIAS DFLOAT+  \ ( adr -- next ) advance to next 64 bit floatcell
+
+' CELLS  ALIAS SFLOATS  \ ( n -- size ) bytesize of n 32 bit floats
+
+' CELL+  ALIAS SFLOAT+  \ ( adr -- next ) advance to next 32 bit floatcell
+
+: FALIGNED    7 + -8 and ; \ ( a1 -- a2 ) next floataligned address
+
+' FALIGNED ALIAS DFALIGNED \ ( a1 -- a2 ) next 64 bit floataligned address
+
+' ALIGNED  ALIAS SFALIGNED \ ( a1 -- a2 ) next 32 bit floataligned address
+
+: FALIGN     dp @ faligned dp ! ; \ ( a1 -- a2 ) next floataligned address
+
+' FALIGN ALIAS DFALIGN  \ ( a1 -- a2 ) 64 bit floataligned address
+
+' ALIGN  ALIAS SFALIGN   \ ( a1 -- a2 ) next 32 bit floataligned address
+
+
+\ ------ FP Number Output ----------------------------------------------------
+
+PRIMITIVE _represent REPRESENT  \ ( f: r d: adr u -- d: exp sign flag )
+\ convert fp number r to string in buffer at adr
+\ results: exponent, sign and valid-flag
+
+8 VALUE PRECISION  \ ( -- p ) actual significand digits
+
+: SET-PRECISION  \ ( p -- ) set no. of significand digits for output
+  dup 1 17 within not -24 ?throw  \ max. 15 valid digits
+  to precision ;
+
+: FPAD  \ ( -- adr ) transient region for pictured FP output
+  here 256 + ;
+
+BEGIN-PRIVATE
+
+: ?SIGN  \ ( flag -- ) print sign
+  if [char] - emit then ;
+
+: .DOT  \ ( -- ) print decimal point
+  [char] . emit ;
+
+: .EXP  \ ( exp -- ) print exponent
+  [char] E emit . space ;
+
+: FTRIM  \ ( a u -- a' u' ) trim string by trailing 0s
+  [char] 0 -1 trim ;
+
+: (F.)  \ ( f: r -- d: -- exp sign )
+  base @ 10 <> -40 ?throw
+  fpad 16 [char] 0 fill
+  fpad precision represent  \ exp sign flag --
+  if exit then  \ "normal" exit
+  r> 3drop
+  fpad precision ftrim type ;  \ type infs and nans
+
+END-PRIVATE
+
+: FS.  \ ( f: r -- ) print fp number in scientific notation
+  (f.) ?sign  \ exp
+  fpad dup c@ emit .dot
+  char+ precision 1- ftrim type 1- .exp ;
+
+: FE.  \ ( f: r -- ) print fp number in engineering notation
+  (f.) ?sign  \ exp
+  fpad c@ [char] 0 = if drop ." 0.E0 " exit then
+  dup 3 mod over 0< if 3 + else dup 0= if drop 3 then then  \ exp m
+  fpad over type .dot
+  fpad over + precision pluck -  \ exp m a u
+  dup 0< if 2drop else ftrim type then
+  - .exp ;
+
+: F.  \ ( f: r -- ) print fp number in fixed-point notation
+  fdup (f.) over 1- precision negate precision within
+  not if 2drop fs. exit then    \ exp sign
+  ?sign dup 0<= if  \ abs(r) < 1
+    ." 0." dup begin dup while 1+ [char] 0 emit repeat drop
+    fpad precision rot + tuck represent 3drop
+    fpad swap ftrim type
+  else  \ abs(r) >= 1
+    fpad over type .dot
+    fpad over + precision rot -
+    dup 0< if 2drop else ftrim type then fdrop
+  then space ;
+
+MAKE-PRIVATE
+
+: .FS  \ ( -- ) print fp stack
+  fdepth BEGIN dup WHILE 1- dup fpick f. REPEAT drop ;
+
+
+\ ------ FP Number Input -----------------------------------------------------
+
+PRIMITIVE _flit [FLIT]  \ push following inline float value
+
+: F, here 8 allot f! ;  \ ( f: r -- ) compile a float into codespace
+
+: FLITERAL \ ( f: r -- ) compile r as inline literal float number
+  ['] [flit] compile, f, ; IMMEDIATE COMPILE-ONLY
+
+PRIMITIVE _tofloat >FLOAT  \ ( d: a u -- false | true f: r )
+\ convert string to fp number if possible
+
+:NONAME  \ extend INTERPRET to recognize fp numbers
+  r> 2r> >float
+  IF   base @ 10 <> -40 ?throw
+       state @ IF postpone fliteral THEN
+  ELSE -13 ?throw THEN >r ;
+IS (INTERPRET)
+
+: FCONSTANT   \ ( r 'name' -- ) create a fp constant from r
+  create f, does> f@ ;
+
+3.14159265358979323846E FCONSTANT PI
+
+: FVARIABLE  \ ( 'name' -- ) create a fp variable, initialized with zero
+  variable 0.E f, ;
+
+
+\ ------ MinForth Float Values -----------------------------------------------
+
+BEGIN-PRIVATE
+
+0 VALUE DO-FVALUE
+
+END-PRIVATE
+
+: FVALUE \ ( d 'name' -- ) create a double constant with the value d
+  create f, does> [ HERE TO DO-FVALUE ] f@ ;
+
+: FTO    \ ( d 'name' -- ) store a
+  ' dup @ do-fvalue <> -32 ?throw cell+
+  state @ IF [compile] literal postpone f! ELSE f! THEN ; IMMEDIATE
+
+MAKE-PRIVATE
+
+
+\ ------ FP Arithmetics ------------------------------------------------------
+
+PRIMITIVE _fplus  F+  \ ( f: r1 r2 -- sum ) add floats
+
+PRIMITIVE _fminus F-  \ ( f: r1 r2 -- diff ) subtract floats
+
+PRIMITIVE _fstar  F*  \ ( f: r1 r2 -- prod ) multiply floats
+
+PRIMITIVE _fdiv   F/  \ ( f: r1 r2 -- quot ) divide floats
+
+: FNEGATE    -1.E0 f* ;  \ ( f: r -- -r ) negate float
+
+: F2*        2.E f* ;    \ ( f: r -- 2r ) twice float
+
+: F2/        0.5E f* ;   \ ( f: r -- r/2 ) half float
+
+PRIMITIVE  _fsqrt FSQRT  \ ( f: r -- root(r) ) square root function
+
+
+\ ------ FP Comparisons ------------------------------------------------------
+
+PRIMITIVE  _fzequal F0=  \ ( f: r -- d: flag ) true if r is zero exactly
+
+PRIMITIVE  _fzless  F0<  \ ( f: r -- d: flag ) true if r is negative
+
+: F<   \ ( f: r1 r2 -- d: flag ) true if r1 < r2
+  f- f0< ;
+
+: FABS \ ( f: r -- |r| ) absloute value of r
+  fdup f0< if fnegate then ;
+
+: FMAX \ ( f: r1 r2 -- r ) select larger value of r1 or r2
+  fover fover f- f0< if fswap then fdrop ;
+
+: FMIN \ ( f: r1 r2 -- r ) select smaller value of r1 or r2
+  fover fover f- f0< not if fswap then fdrop ;
+
+: F~  \ ( f: r1 r2 r3 -- flag ) check proximity of floats
+\ when r3>0 : true if |r1 - r2| < r3
+\ when r3=0 : true if exactly r1 = r2
+\ when r3<0 : true if |r1 - r2| < |r3| * (|r1| + |r2|)
+  fdup f0= IF fdrop f- f0= EXIT THEN
+  fdup f0< IF fnegate frot frot fover fabs fover fabs f+
+              frot frot f- fabs frot frot f*
+         ELSE frot frot f- fabs fswap
+         THEN f< ;
+
+
+\ ------ FP Number Conversion ------------------------------------------------
+
+PRIMITIVE _dtof  D>F       \ ( d -- f: r ) convert double to float
+
+PRIMITIVE _ftod  F>D       \ ( f: r -- d: d ) convert float to double
+
+PRIMITIVE _floor FLOOR     \ ( f: r1 -- r2 ) round towards negative infinity
+
+: S>F   dup 0< d>f ;  \ ( n -- f: r ) convert integer to float
+
+: F>S   f>d drop ;    \ ( f: r -- d: n ) convert float to integer
+
+: FROUND  \ ( f: r1 -- r2 ) round towards nearest integer
+  0.5E f+ floor ;
+
+
+\ ------ FP Trigonometric Functions ------------------------------------------
+
+PRIMITIVE _fsin FSIN   \ ( f: r -- sin(r) ) sine function
+
+: FCOS   \ ( f: r -- cos(r) ) cosine function
+  1.57079632679489661923E f+ fsin ;
+
+: FSINCOS  \ ( f: r -- sin cos ) compound sine and cosine functions
+  fdup fsin fswap fcos ;
+
+: FTAN   \ ( f: r -- tan(r) ) tangent function
+  fsincos f/ ;
+
+PRIMITIVE _fasin FASIN \ ( f: r -- asin(r) ) inverse sine function
+
+: FACOS  \ ( f: r -- cos(r) ) inverse cosine function
+  1.57079632679489661923E fswap fasin f- ;
+
+: FATAN  \ ( f: r -- tan(r) ) inverse tangent function
+  fdup fdup f* 1.E f+ fsqrt f/ fasin ;
+
+: FATAN2 \ ( f: y x -- r3 ) angle of tangent defined by y / x
+  fdup f0< if fover f0< f/ fatan if pi f- else pi f+ then
+           exit then
+  f/ fatan ;
+
+
+\ ------ FP Exponential and Hyperbolic Functions -----------------------------
+
+PRIMITIVE _fexp FEXP  \ ( f: r -- e(r) ) natural exponential function
+
+PRIMITIVE _flog FLN   \ ( f: r -- ln(r) ) natural logarithmic function
+
+: FEXPM1   \ ( f: r -- e(r)-1 ) exponential function shifted to cross origin
+  fexp 1.E f- ;
+
+: FLNP1    \ ( f: r -- ln(r+1) ) logarithmic function shifted to cross origin
+  1.E f+ fln ;
+
+: FLOG     \ ( f: r -- log10(r) ) decadic logarithmic function
+  fln 0.43429448190325182765E0 F* ;
+
+: F**      \ ( f: r1 r2 -- pow ) raise r1 to the power of r2
+  fdup f0= if fdrop fdrop 1.E exit then
+  fswap fln f* fexp ;
+
+BEGIN-PRIVATE
+
+: TRIGH  \ subroutine for sinh and cosh
+  fdup fexp fswap fnegate fexp ;
+
+: ATRIGH \ subroutine for asinh and acosh
+  fover fdup f* f+ fsqrt f+ fln ;
+
+END-PRIVATE
+
+: FSINH    \ ( f: r -- sinh(r) ) hyperbolic sine function
+  trigh f- f2/ ;
+
+: FCOSH    \ ( f: r -- cosh(r) ) hyperbolic cosine function
+  trigh f+ f2/ ;
+
+: FTANH    \ ( f: r -- tanh(r) ) hyperbolic tangent function
+  f2* fexp fdup 1.E f- fswap 1.E f+ f/ ;
+
+: FASINH   \ ( f: r -- asinh(r) ) inverse hyperbolic sine function
+  1.E atrigh ;
+
+: FACOSH   \ ( f: r -- acosh(r) ) inverse hyperbolic cosine function
+  -1.E atrigh ;
+
+: FATANH   \ ( f: r -- atanh(r) ) inverse hyperbolic tangent function
+  1.E fover f+ 1.E frot f- f/ fln f2/ ;
+
+MAKE-PRIVATE
+
+\ ------ Updating Environment ------------------------------------------------
+
+\ 15                       CONSTANT MAX-DIGITS
+\ 1.7976931348623157E+308 FCONSTANT MAX-FLOAT
+\ 2.2250738585072014E-308 FCONSTANT MIN-FLOAT
+\ 2.2204460492503131E-16  FCONSTANT EPS
+
+:NONAME
+  s" FLOATING" true ?env
+  s" FLOATING-EXT" true ?env
+  s" FLOATING-STACK" fpmax @ ?env
+  defered env? ;
+IS ENV?
+
+:NONAME
+  upper 2dup s" MAX-FLOAT" compare 0=
+  IF 2drop 1.7976931348623157E+308 true EXIT THEN
+  defered environment? ;
+IS ENVIRONMENT?

@@ -1,0 +1,7 @@
+*.o
+*.i
+*.log
+miniforth
+metacomp
+decomp
+

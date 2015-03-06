@@ -1,0 +1,257 @@
+( ============================================================================
+  FACILITY.MF - the FACILITY wordset for MinForth
+  ============================================================================
+
+  The following standard words are defined in the kernel:
+  KEY? EKEY EKEY>CHAR EKEY? EMIT?
+
+  Note:
+  This file includes terminal control words that can be used with ANSI-
+  compatible terminals. In order to allow other terminals to work with
+  MinForth, terminal control words defined in EXTEND.MF are defered words.
+  Different keyboard and screen control configurations should be adaptable
+  by "simple" modifications in this file.
+  When you prefer running Linux with XWindow then you should start MinForth
+  in an xterm as in:
+  ~> xterm -bg black -fg white +cm
+  ~> mf
+)
+
+\  Copyright (C) 2002  Andreas Kochenburger (kochenburger@gmx.de)
+\
+\  This program is free software; you can redistribute it and/or modify
+\  it under the terms of the GNU General Public License as published by
+\  the Free Software Foundation; either version 2 of the License, or
+\  (at your option) any later version.
+\
+\  This program is distributed in the hope that it will be useful,
+\  but WITHOUT ANY WARRANTY; without even the implied warranty of
+\  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+\  GNU General Public License for more details.
+\
+\  You should have received a copy of the GNU General Public License
+\  along with this program; if not, write to the Free Software
+\  Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
+
+\ ------ Time Functions ------------------------------------------------------
+
+PRIMITIVE _timedate  TIME&DATE \ ( -- sec min hour day month year )
+
+PRIMITIVE _msecs     MSECS     \ ( -- msecs-since-start )
+
+PRIMITIVE _ticker    TICKER    \ ( msecs-until-task -- )
+
+BEGIN-PRIVATE
+
+0 VALUE (TIC) 0 VALUE (TOC)
+
+END-PRIVATE
+
+: MS  \ ( u -- ) wait u milliseconds
+  msecs + begin dup msecs u< until drop ;
+
+: TIC  \ ( -- ) remember start time
+  msecs to (tic) ;
+
+: TOC  \ ( -- ) remember stop time
+  msecs to (toc) ;
+
+: .ELAPSED
+  (toc) (tic) - 1000 /mod 0 u.r [char] . emit
+  s>d <# # # #> type space [char] s emit ;
+
+MAKE-PRIVATE
+
+
+\ ------ Operating System Facilities -----------------------------------------
+
+: SH"  \ ( string" - ) issue a command to the operating system
+  [char] " parse state @
+  if postpone sliteral postpone os-command postpone drop
+  else s>buf sbuf @ count os-command drop then ; IMMEDIATE
+
+OS-TYPE 2 <= [IF]
+
+: FILES  \ show all files in the current directory
+  cr sh" dir /w" ; \ for DOS, Win32
+
+[ELSE]
+
+: FILES  \ show all files in the current directory
+  cr sh" ls -C -a" ; \ for Linux, Minix
+
+[THEN]
+
+
+\ ------ Dumb Terminal Control -----------------------------------------------
+
+VARIABLE TERMINAL
+
+DEFER NORMAL            \ ( -- ) set standard terminal colours
+
+DEFER PAGE              \ ( -- ) clear terminal screen
+
+DEFER AT-XY             \ ( col-x row-y -- ) locate cursor
+
+DEFER STORE-XY		\ ( -- ) remember current cursor position
+
+DEFER RESTORE-XY	\ ( -- ) set cursor to last remembered position
+
+DEFER Y-UP		\ ( -- ) cursor up
+
+DEFER Y-DOWN		\ ( -- ) cursor down
+
+DEFER X-LEFT		\ ( -- ) cursor left
+
+DEFER X-RIGHT		\ ( -- ) cursor right
+
+' 2DROP    IS AT-XY
+' NOOP DUP IS NORMAL
+       DUP IS PAGE
+       DUP IS STORE-XY
+       DUP IS RESTORE-XY
+       DUP IS Y-UP
+       DUP IS Y-DOWN
+       DUP IS X-LEFT
+	   IS X-RIGHT
+
+0 VALUE BLACK   7 VALUE WHITE
+1 VALUE RED	2 VALUE GREEN    3 VALUE BROWN
+4 VALUE BLUE    5 VALUE MAGENTA  6 VALUE CYAN
+
+: BRIGHT  \ ( colour -- bright-colour )
+  8 or ;
+
+DEFER LETTERS		\ ( c -- ) set letters colour
+
+DEFER BACKGROUND	\ ( c -- ) set backgound colour
+
+' DROP DUP IS LETTERS
+	   IS BACKGROUND
+
+
+\ ------ MinForth Command-line Editing ---------------------------------------
+
+BEGIN-PRIVATE
+
+: (DEL-IN)  \ ( a am c k -- do. ) delete char under cursor
+  >r store-xy
+  dup char+ over span @ pluck 6 pick - - pluck over type space move span decr
+  restore-xy r> ;
+
+: BS-IN     \ ( a am c k -- do. ) backspace
+  over 4 pick = if exit then  \ buffer empty
+  swap backspace char- swap (del-in) ;
+
+: DEL-IN    \ ( a am c k -- do. ) delete
+  over 4 pick span @ + = if bs-in exit then  \ cursor at buffer end
+  (del-in) ;
+
+: INS-IN    \ ( a am c k -- do. ) insert
+  pluck 4 pick span @ + = if exit then	\ buffer full
+  >r dup 3 pick - span @ swap -
+  over dup char+ pluck move bl pluck c! span incr
+  store-xy over swap 1+ type restore-xy r> ;
+
+: LEFT-IN   \ ( a am c k -- do. ) cursor left
+  >r pluck over < if char- x-left then r> ;
+
+: RIGHT-IN  \ ( a am c k -- do. ) cursor right
+  >r dup 3 pick - span @ < if char+ x-right then r> ;
+
+: HOME-IN   \ ( a am c k -- do. ) cursor to begin
+  >r pluck - begin dup while 1- x-left repeat drop over r> ;
+
+: END-IN    \ ( a am c k -- do. ) cursor to end
+  >r pluck span @ + dup rot - begin dup while 1- x-right repeat drop r> ;
+
+: ESC-IN    \ ( a am c k -- do. ) escape empties
+  home-in >r store-xy span @ spaces restore-xy drop over span off r> ;
+
+B/IB 2* VALUE #HISTIB	      \ history buffer size
+
+CREATE HISTIB #HISTIB ALLOT   \ history buffer for input lines
+HISTIB #HISTIB ERASE	      \ lines are stored in ct+line+0 format
+
+1 VALUE HISTLN		      \ offset to selected line
+
+: HISTLINE    \ ( -- adr ) address of actual line in history buffer
+  histib histln + ;
+
+: GET-HISTLN  \ ( a am c k -- do. ) copy line from history buffer
+  home-in store-xy >r drop
+  histline count pluck 4 pick - min
+  span @ spaces restore-xy 2dup type
+  tuck 4 pick swap move dup span ! pluck + r> ;
+
+: UP-HIST     \ cursor up: get last lines from history buffer
+  histline c@ 0= if exit then
+  get-histln histline dup c@ 2+ + dup c@  \ get successor
+  if histib - else drop 1 then to histln ;
+
+: DOWN-HIST   \ cursor down: get oldest lines from history buffer
+  histline c@ 0= if exit then
+  get-histln histln 1 =
+  if histib #histib 1- 0 -1 trim + else histline char- then
+  begin char- dup c@ 0= until  \ get predecessor
+  char+ histib - to histln ;
+
+: STORE-HIST \ ( a am c k -- do. ) store actual input in history buffer
+  span @ 0= if exit then  \ empty line
+  span @ 2+ histib char+ 2dup + rot #histib swap - 2 - move
+  3 pick span @ histib char+ splace
+  histib #histib + char-
+  begin char- dup c@ while 0 over c! repeat drop
+  1 to histln ;
+
+:NONAME  \ ( a amax cur key -- do. ) handle control characters
+  terminal @ 0= if defered ctrl-in exit then
+  dup case
+      13    of store-hist end-in endof
+      bs    of bs-in	 endof
+      27    of esc-in	 endof
+      328   of up-hist	 endof
+      336   of down-hist endof
+      331   of left-in	 endof
+      333   of right-in  endof
+      327   of home-in	 endof
+      335   of end-in	 endof
+      338   of ins-in	 endof
+      339   of del-in	 endof
+  endcase ;
+IS CTRL-IN   \ extend ACCEPT/EXPECT
+
+END-PRIVATE MAKE-PRIVATE
+
+
+\ ------ Terminal Selection --------------------------------------------------
+
+OS-TYPE 1 = [IF] \ DOS
+REQUIRES ansiterm.mf
+REQUIRES doskey.mf
+[THEN]
+
+OS-TYPE 2 = [IF] \ Windows
+REQUIRES winterm.mf
+REQUIRES doskey.mf
+[THEN]
+
+OS-TYPE 3 = [IF] \ Linux
+REQUIRES ansiterm.mf
+REQUIRES linuxkey.mf
+[THEN]
+
+OS-TYPE 4 = [IF] \ Minix
+REQUIRES ansiterm.mf
+REQUIRES linuxkey.mf
+[THEN]
+
+
+\ ------ Updating Environment ------------------------------------------------
+
+:NONAME
+  s" FACILITY"	   true ?env
+  s" FACILITY-EXT" true ?env
+  defered env? ;
+IS ENV?
+

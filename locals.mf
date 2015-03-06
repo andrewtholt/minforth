@@ -1,0 +1,147 @@
+( ============================================================================
+  LOCALS.MF - the LOCALS wordset for MinForth
+  ============================================================================
+
+  The following standard words are defined in the kernel:
+  TO
+)
+
+\  Copyright (C) 2002  Andreas Kochenburger (kochenburger@gmx.de)
+\
+\  This program is free software; you can redistribute it and/or modify
+\  it under the terms of the GNU General Public License as published by
+\  the Free Software Foundation; either version 2 of the License, or
+\  (at your option) any later version.
+\
+\  This program is distributed in the hope that it will be useful,
+\  but WITHOUT ANY WARRANTY; without even the implied warranty of
+\  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+\  GNU General Public License for more details.
+\
+\  You should have received a copy of the GNU General Public License
+\  along with this program; if not, write to the Free Software
+\  Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
+    
+
+\ ------ Runtime behavior-----------------------------------------------------
+
+0 VALUE L1 0 VALUE L2 0 VALUE L3 0 VALUE L4  \ local values
+0 VALUE L5 0 VALUE L6 0 VALUE L7 0 VALUE L8
+0 VALUE L9 0 VALUE L10
+
+BEGIN-PRIVATE
+
+0 VALUE L#  \ number of actual locals
+
+' L1 >BODY CONSTANT L1ADR
+
+: LNADR   \ ( n -- adr ) parameter field address of local # n
+  12 * l1adr + ;
+
+VARIABLE LHANDLER  \ keeps rstack depth of last locals frame
+
+: SAVE-L     \ ( |r ret -- l1..ln n lh ret ) save old locals
+  2r> l1adr l# begin dup while swap dup @ >r 12 + swap 1- repeat 2drop
+  l# >r lhandler @ >r rdepth lhandler ! 2>r ;
+
+: RESTORE-L  \ ( |r l1..ln n lh ret -- ret ) restore old locals
+  r> r> lhandler ! r> to l# l# 1- lnadr l#
+  begin dup while swap r> over ! 12 - swap 1- repeat 2drop >r ;
+
+: LOAD-L  \ ( ln..l1 n -- ) load n datastack items to local values
+  save-l to l# l1adr l#
+  begin dup while >r tuck ! 12 + r> 1- repeat 2drop ;
+
+: LOAD-MFL  \ ( ln..l1 i u -- ) like load-l but in reversed order
+  save-l 2dup + to l# over lnadr dup rot
+       begin dup while swap dup off 12 + swap 1- repeat 2drop
+  swap begin dup while >r 12 - tuck ! r> 1- repeat 2drop ;
+
+: UNLOAD-UL  \ ( u -- ) load return values to datastack
+  l# over - lnadr swap
+  begin dup while >r dup @ swap 12 + r> 1- repeat 2drop ;
+
+
+\ ------ Compiletime behavior ------------------------------------------------
+
+VARIABLE TPLOC  \ keeps old tp during locals definitions
+
+0 VALUE #LOCS  \ total no of locals
+0 VALUE #ULOCS  \ no of uninitialized locals
+
+: |LOCALS  \ ( -- ) finish definition with locals
+  #locs if tploc @ 'bcb @ =
+           if temp off temp-wordlist cell+ off 'bcb @ tp !
+           else tploc @ dup tp ! temp-wordlist cell+ ! then
+           #ulocs if #ulocs [compile] literal postpone unload-ul then
+           postpone restore-l
+           0 to #ulocs 0 to #locs
+  then ;
+
+END-PRIVATE
+
+: (LOCAL)  \ ( adr u -- ) evaluate locals messages
+  #locs 10 > abort" only 10 locals allowed"
+  dup if #locs lnadr cell- -rot
+         last-link @ last-n @ 2>r
+         temp @ >r temp on "header r> temp !
+         2r> last-n ! last-link !
+         1 +to #locs
+      exit then
+  2drop
+  #locs if #locs [compile] literal postpone load-l then ;
+
+: LOCALS|  \ ( -- ) create local identifiers with ANS syntax
+  tp @ tploc ! 0 to #locs
+  begin get-word 2dup s" |" compare
+  while (local)
+  repeat drop 0 (local) ; IMMEDIATE COMPILE-ONLY
+
+: L(  \ ( -- ) create locals with MinForth syntax
+  tp @ tploc ! 0 to #locs 0 to #ulocs
+  begin  get-word 2dup s" |" compare 0=
+         if 1 +to #ulocs 2drop get-word then
+                  2dup s" )" compare
+  while  (local)
+         #ulocs if 1 +to #ulocs then
+  repeat 2drop
+  #ulocs if -1 +to #ulocs then
+  #locs if #locs #ulocs - [compile] literal #ulocs [compile] literal
+           postpone load-mfl then ; IMMEDIATE COMPILE-ONLY
+
+
+\ ------ Extend MinForth system to work with locals --------------------------
+
+:NONAME  \ leave a colon definition
+  #locs if #ulocs if #ulocs [compile] literal postpone unload-ul then
+           postpone restore-l then
+  defered exit ;
+IS EXIT
+
+:NONAME     \ terminate a colon definition
+  |locals defered ; ;
+IS ;
+
+:NONAME  \ provide runtime semantics to the last created header
+  |locals defered does> ;
+IS DOES>
+
+:NONAME  \ restore locals frame within THROW
+  dup if begin lhandler @ handler @ >
+         while lhandler @ rp! restore-l
+         repeat
+      then defered throw ;
+IS THROW
+
+MAKE-PRIVATE
+
+
+\ ------ Updating Environment ------------------------------------------------
+
+:NONAME
+   s" LOCALS"     true ?env
+   s" LOCALS-EXT" true ?env
+   s" #LOCALS"    10   ?env
+   defered env? ;
+IS ENV?
+

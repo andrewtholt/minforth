@@ -1,0 +1,156 @@
+( ============================================================================
+   SEARCH.MF - the SEARCH-ORDER wordset for MinForth
+  ============================================================================
+
+  The following standard words are defined in the kernel:
+  FIND SEARCH-WORDLIST
+)
+
+\  Copyright (C) 2002  Andreas Kochenburger (kochenburger@gmx.de)
+\
+\  This program is free software; you can redistribute it and/or modify
+\  it under the terms of the GNU General Public License as published by
+\  the Free Software Foundation; either version 2 of the License, or
+\  (at your option) any later version.
+\
+\  This program is distributed in the hope that it will be useful,
+\  but WITHOUT ANY WARRANTY; without even the implied warranty of
+\  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+\  GNU General Public License for more details.
+\
+\  You should have received a copy of the GNU General Public License
+\  along with this program; if not, write to the Free Software
+\  Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
+    
+
+\ ------ Wordlists ----------------------------------------------------------
+
+: DEFINITIONS \ ( -- ) make the first context wordlist get new words
+  context @ current ! ;
+
+: ROOT
+  root-wordlist context ! ;
+
+( WORDLIST data structure:
+  1st cell: n , n cells: thread head pointers
+  wid: address of 1st cell )
+
+: #WORDLIST   \ ( n -- wid ) create an empty new wordlist of n threads
+  align here swap dup , here swap cells dup allot erase ;
+
+: WORDLIST    \ ( n -- wid ) create an empty new wordlist of 4 threads
+  4 #wordlist ;
+
+(  VOCABULARY data structure:
+   n cells: wordlist data structure
+   last cell: pointer to previous vocabulary's wordlist
+   VOC-LINK points to last vocabulary's wordlist  )
+
+: #VOCABULARY \ ( n 'name' -- ) create named wordlist and link into voc-list
+  create #wordlist voc-link @ , voc-link !
+  does> context ! ;
+
+: VOCABULARY  \ ( 'name' -- ) create a threaded vocabulary
+  4 #vocabulary ;
+
+: SEAL      \ ( -- ) restrict context to its first wordlist only
+  context @ context #vocs cells erase context ! ;
+
+: ALSO      \ ( -- ) move up context by one place to allow a new wordlist
+  context dup cell+ #vocs 1- cells move ;
+
+: ONLY      \ ( -- ) set up minimal context
+  root seal also ;
+
+: PREVIOUS  \ ( -- ) undo a previous ALSO
+  context dup cell+ swap #vocs 1- cells move
+  context #vocs 1- cells + off
+  context @ 0= if only then ;
+
+: SET-CURRENT \ ( wid -- ) set compilation wordlist
+  current ! ;
+
+: GET-CURRENT \  ( -- wid ) get compilation wordlist
+  current @ ;
+
+: GET-ORDER  \ ( -- widn..wid1 n ) get all context wordlists
+  0 context #vocs 1- cells bounds swap
+  do i @ dup if swap 1+ else drop then -1 cells +loop ;
+
+: SET-ORDER  \ ( widn..wid1 n -- ) set a bunch of new context wordlists
+  dup -1 = if drop only exit then
+  seal context swap 0 ?do tuck ! cell+ loop drop ;
+
+
+\ ------ Displaying Wordlists ------------------------------------------------
+
+BEGIN-PRIVATE
+
+: .VOC  \ ( wid -- ) display the name of a vocabulary
+  dup root-wordlist = if drop ."  ROOT" exit then
+  dup if cell- space ?name else drop then ;
+
+END-PRIVATE
+
+: ORDER \ ( -- ) display list of all context vocabularies
+  cr ." Context:"
+    context #vocs cells bounds do i @ .voc 4 +loop
+  cr ." Current:" current @ .voc ;
+
+: VOCS  \ ( -- ) display all defined vocabularies
+  [char] : emit voc-link @ begin
+  dup .voc dup @ 1+ cells + @ dup 0= until drop ;
+
+MAKE-PRIVATE
+
+
+\ ------ Organizing MinForth Vocabularies ------------------------------------
+
+52 #VOCABULARY         FORTH
+LAST @ >BODY CONSTANT  FORTH-WORDLIST
+
+: FETCH-WORDS{  \ ( "word1..wordn" -- ) move following words to CURRENT list
+  begin begin get-word dup 0=   \ a u f
+        while 2drop refill 0= if exit then
+        repeat
+        \ 2dup space type space
+        2dup s" }" compare  \ a u f
+  while 2dup "find 0= -13 ?throw drop found 2@ dup @ rot !  \ a u lfa
+        >r current @ hash  \ thread |r lfa
+        begin dup @ ns>cs dup r@ u>
+        while nip
+        repeat  \ thrafter thrbefore |r lfa
+        cs>ns r@ ! r> cs>ns swap !
+  repeat 2drop ; IMMEDIATE
+
+MARKER FORGET-WEAVE  \ tricky threading begins here
+
+: WEAVE  \ ( -- ) move all words from ROOT to threaded FORTH vocabulary
+  forth 4 ns>cs  \ headers start at ns-address 4
+  begin dup link>name count [hex] 1f and
+        2dup is-file? not and dup
+        if   context @ hash dup @ pluck ! over cs>ns swap ! \ lfa
+        else 2drop
+        then link>next dup n-here u< not
+  until drop
+  FORGET-WEAVE   \ forgets itself
+  forth context @ context cell+ !  \ forth also
+  root root-wordlist dup cell+ off context cell+ cell+ ! definitions ;
+
+\  everything is in the FORTH vocabulary but it is ROOT DEFINITIONS
+WEAVE
+
+\ move some few needed words to ROOT vocabulary
+FETCH-WORDS{ ALSO ONLY SEAL PREVIOUS FORTH DEFINITIONS }
+
+ONLY FORTH ALSO DEFINITIONS
+
+
+\ ------ Updating Environment ------------------------------------------------
+
+:NONAME
+   s" SEARCH-ORDER"     true  ?env
+   s" SEARCH-ORDER-EXT" true  ?env
+   s" WORDLISTS"        #vocs ?env
+   defered env? ;
+IS ENV?

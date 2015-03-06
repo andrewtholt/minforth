@@ -1,0 +1,112 @@
+( ===========================================================================
+  Test suite for the LOCALS wordset for MinForth
+  ===========================================================================
+)
+
+REQUIRES locals
+
+[DEFINED] .S NOT [IF]
+
+: .S   \ ( -- ) print datastack
+  depth BEGIN dup 0> WHILE dup pick . 1- REPEAT drop ;
+
+[THEN]
+
+CR .( Checking the LOCALS Wordset for Minforth )
+CR .( ======================================== )
+CR .( Both sides of <-? must be identical )
+
+CR .( Checking ANS locals syntax: )
+CR .( --------------------------- )
+
+: TEST1   ( b a -- check if it works)
+  locals| a b |
+  a b / ;
+
+cr 3 21 -7 test1 . -7 21 test1 . . .( <-? 0 -3 3 ) .s
+
+: TEST2   ( d c -- check nesting )
+  locals| c d |
+  c 1+ d 1+ test1
+  c d ;
+
+CR 19 3 TEST2 . . . .( <-? 19 3 5 ) .s
+
+: TEST3  ( b a -- check locals access within DO-LOOPs )
+  locals| alfa beta |
+  alfa 0 do i . i beta = if unloop exit then beta . loop ;
+
+cr 3 10 test3 .( <-? 0 3 1 3 2 3 3 ) .s
+
+: TEST4 ( a b -- check locals before DOES> )
+  create locals| a b | a b * ,
+  does> @ . ;
+
+cr 4 5 test4 AAA AAA 7 -9 test4 bbb bbb .( <-? 20 -63 ) .s
+
+: test5  ( n -- check locals behind DOES> )
+  create ,
+  does> locals| adr c d | adr @ d negate - c + ;
+
+cr 3 test5 ccc 7 8 ccc .  .( <-? 18 ) .s
+
+: test6 ( b a -- check locals on both sides of DOES> )
+  locals| a b | a b * b * create ,
+  does>
+  locals| a b | a @ b / ;
+
+cr 4 -3 test6 ddd -2 ddd .  .( <-? 24 ) .s
+
+: TEST7 ( a b -- check ; and exit )
+  locals| b a | 0 a b < if exit then a b ;
+
+cr 4 3 test7 . . . .( <-? 3 4 0 ) .s
+cr 3 4 test7 . .( <-? 0 ) .s
+
+: test82 locals| a b | \ a=0 b=8
+  b a / ;
+
+: test81 locals| c d |  \ c=7 d=1
+  c 1+ d 1 - test82 ;
+
+: test8 locals| e f | ( check CATCH/THROW with locals )
+  e f ['] test81
+  catch e f ;
+
+cr 7 1 test8 .s .( <-? 8 0 -10 1 7 )
+0 sp!
+
+CR .( Checking MinForth locals syntax: )
+CR .( -------------------------------- )
+
+: test9 l( a b | c d ) ( check if it works )
+  a . b . c . d  . ;
+
+cr 3 4 test9 . . .( <-? 3 4 0 0 0 0 ) .s
+
+: test10 l( a b | c ) ( check return value )
+  a b * to c 128 c / . a . b . ;
+
+cr 4 10 test10 . .( <-? 3 4 10 40 ) .s
+
+: test11 l( d e | f )
+  d e * e test10 d . e . ;
+
+cr 3 2 test11 . . .( <-? 10 6 2 3 2 0 12 ) .s
+
+: test12 l( a b )
+  a negate . b 1+ . ;
+
+cr 1 2 test12 .( <-? -1 3 ) .s
+
+: test13 l( d e | )
+  e d test12 e . d . ;
+
+cr 7 8 test13 .( <-? -8 8 8 7 ) .s
+
+: test14 l( | a b )
+  to a to b a b * . ;
+
+cr 4 -3 test14 . . .( <-? -12 4 -3 ) .s
+cr
+

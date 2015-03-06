@@ -1,0 +1,58 @@
+\ The classical Towers of Hanoi benchmark
+\
+\ From W.P. Salman, O. Tisserand and B. Toulout, FORTH, Macmillan
+\ pp. 120-121
+
+cr .( Loading Towers of Hanoi benchmark...)
+
+variable moves
+
+: copy ( x y z -- x y z x y z)
+  >r 2dup r@ -rot r>
+;
+
+: dispose ( x y z -- )
+  2drop drop
+;
+
+: edit ( d a n -- d a n)
+  copy drop swap ." From: " . ." to: " . cr
+;
+
+: prepare-call ( d a n -- d a n d i n-1)
+  copy -rot over + 6 swap - rot 1-
+;
+
+: prepare-return ( d a n -- d a n i a n-1)
+  copy swap rot over + 6 swap - swap rot 1-
+;
+
+: verify-hanoi ( departure arrival number -- )
+  dup
+  if prepare-call recurse
+    edit
+    prepare-return recurse
+  then
+  dispose
+;
+
+: verify-towers-of-hanoi ( -- )
+  1 3 4 verify-hanoi
+;
+
+: hanoi ( departure arrival number -- )
+  dup
+  if prepare-call recurse
+    1 moves +!
+    prepare-return recurse
+  then
+  dispose
+;
+
+: towers-of-hanoi ( -- )
+  0 moves !
+  1 3 14 hanoi
+  moves @ 16383 = not abort" towers-of-hanoi: wrong result"
+;
+
+towers-of-hanoi
