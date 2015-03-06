@@ -328,24 +328,43 @@ void ReadImageFile()
 
 /* ---------------------------------------------------------------------------
    Open and read MinForth imagefile and commandline
-   */
 
-void OpenReadImageFile(int argc, char **argv)
-{  int i,st; Addr adr; char *np1, *np2;
-    if ((argc >=3)&&(argv[1][0]=='-')&&(toupper(argv[1][1])=='I'))
-    {  strcpy(imagename,argv[2]);
-        if (NULL == strchr(imagename,'.')) strcat(imagename,".i");
-        st = 3; }
-    else
-    {  np1 = strrchr(argv[0],'/');  if (np1 == NULL) np1 = argv[0];
-        np2 = strrchr(argv[0],'\\'); if (np2 == NULL) np2 = argv[0];
-        if (np2 > np1) np1 = np2;
-        if ((*np1 == '/')||(*np1 == '\\')) np1++; /* fname with ext isolated */
-        np2 = strchr(np1,'.'); if (np2 == NULL) np2 = argv[0]+strlen(argv[0]);
+    NOTE: If mfi was used in an embedded (say as an extention to u-boot then
+    this function would be replaced with run which read from a memory device.
+
+*/
+
+void OpenReadImageFile(int argc, char **argv) {
+    int i,st; Addr adr; char *np1, *np2;
+
+    if ((argc >=3)&&(argv[1][0]=='-')&&(toupper(argv[1][1])=='I')) {
+        strcpy(imagename,argv[2]);
+        if (NULL == strchr(imagename,'.')) 
+            strcat(imagename,".i");
+        st = 3;
+    } else {  
+        np1 = strrchr(argv[0],'/');  
+        if (np1 == NULL) np1 = argv[0];
+
+        np2 = strrchr(argv[0],'\\'); 
+        if (np2 == NULL) 
+            np2 = argv[0];
+
+        if (np2 > np1) 
+            np1 = np2;
+
+        if ((*np1 == '/')||(*np1 == '\\')) 
+            np1++; /* fname with ext isolated */
+
+        np2 = strchr(np1,'.'); 
+        if (np2 == NULL) 
+            np2 = argv[0]+strlen(argv[0]);
+
         strcpy(imagename,np1);
         imagename[np2-np1] = 0;
         strcat(imagename,".i");
-        st = 1; }
+        st = 1; 
+    }
     strcpy(fname,imagename);
 #if _OSTYPE <= 2
     imagefile = fopen(imagename,"rb");
@@ -1679,14 +1698,25 @@ Label1:
 Label2:
     fflush(stdout);
     switch (toupper(GetKey())) {
-        case ' ': case 13: break;
+        case ' ': case 13: 
+            break;
         case 'R': printf(" Returnstack ");
-                  if (rstflag) { rstflag=0;	printf("off"); }
-                  else {	    rstflag=-1; printf("on"); }
+                  if (rstflag) { 
+                      rstflag=0;
+                      printf("off"); 
+                  } else {
+                      rstflag=-1; 
+                      printf("on");
+                  }
                   goto Label1;
         case 'F': printf(" Floating-point stack ");
-                  if (fltflag) { fltflag=0;	printf("off"); }
-                  else {	    fltflag=-1; printf("on"); }
+                  if (fltflag) { 
+                      fltflag=0;
+                      printf("off"); 
+                  } else {
+                      fltflag=-1; 
+                      printf("on"); 
+                  }
                   goto Label1;
         case 'X': if (hexflag) { hexflag=0;	printf(" Decimal"); }
                       else {	    hexflag=-1; printf(" Hex"); }
@@ -1742,8 +1772,8 @@ void Task()
 /* ---------------------------------------------------------------------------
    MinForth Main Program and Virtual Machine
    */
-int main(int argc, char **argv)
-{
+int main(int argc, char **argv) {
+
     OpenReadImageFile(argc,argv);
     CloseImageFile();
     SaveTerminal();
