@@ -1,6 +1,18 @@
 
 A minmal forth 'ported' to a modern Linux
 
+To compile this simpy enter:
+
+./build.sh
+
+A makefile for the architecture that you are compiling for is required.
+For Intel an i686 and x86_64 is provided, more will be added over time.
+
+To clean up
+
+./build -a clean 
+
+
 For the original see:
 http://cyberside.net.ee/files/devel/forth/minforth/mfintro.pdf
 
